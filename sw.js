@@ -1,6 +1,6 @@
 /* Buck Ledger service worker: caches the app files on the phone.
  * Bump VERSION whenever you publish changes. */
-var VERSION = 'buckledger-v3.5.2';
+var VERSION = 'buckledger-v3.5.3';
 var ASSETS = [
   './', 'index.html', 'styles.css', 'app.js', 'sim.js', 'terrain.js', 'astro.js', 'wx.js', 'ocr.js', 'data/states.js', 'data/example.js', 'fieldtips.js', 'config.js', 'manifest.webmanifest', 'privacy.html',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/maskable-512.png', 'icons/apple-touch-icon.png', 'icons/favicon-32.png'

@@ -1058,7 +1058,7 @@
   VIEWS.bucks = function () {
     var h = head('Your Bucks');
     h += '<div class="paper">';
-    if (!S.deer.length) h += '<p class="muted" style="margin:0 0 10px">Name the bucks you recognize. Tag them in the Sort Pass and each one gets his own page: Day Ring, Season Strip and a plain-English read.</p>';
+    if (!S.deer.length) h += '<p class="muted" style="margin:0 0 10px">Name the bucks you recognize. Tag them in the Sort Pass and each one gets his own page: Day Ring, Season Strip and what his visits add up to.</p>';
     var shown = visibleDeer(), hidden = S.deer.length - shown.length;
     h += '<ul class="list">' + shown.map(function (b) {
       var vs = visits('deer:' + b.id), last = vs[0], cover = (b.photo && PI[b.photo]) || (last ? last.photos[0] : null), t = tally(vs);
@@ -1082,7 +1082,7 @@
     } else {
       h += '<div class="paper"><h3>Day Ring</h3><div class="ring-wrap">' + dayRing(vs) + '</div>' + legend() + '<p class="tiny muted" style="margin:4px 0 0">Midnight at the bottom, noon at the top. Each dot is one visit.' + (hasLoc() ? ' Shading uses real sunrise/sunset for ' + esc(fmtDate(vs[Math.floor(vs.length / 2)].d)) + '.' : '') + '</p></div>';
       h += '<div class="paper"><h3>Season Strip</h3>' + seasonStrip(vs) + '<p class="tiny muted" style="margin:4px 0 0">' + (hasLoc() ? 'Gold: seen in legal light that day. Navy: only after dark.' : 'Tan: seen that day. Add your property location to split daylight from dark.') + '</p></div>';
-      h += '<div class="paper" id="plain-read"><h3>The read</h3><ul class="read">' + plainRead(vs).map(function (l) { return '<li>' + l + '</li>'; }).join('') + '</ul></div>';
+      h += '<div class="paper" id="plain-read"><h3>What it means</h3><ul class="read">' + plainRead(vs).map(function (l) { return '<li>' + l + '</li>'; }).join('') + '</ul></div>';
       h += '<div class="paper"><h3>By camera</h3>' + Object.keys(t.byCam).sort(function (a, c2) { return t.byCam[c2] - t.byCam[a]; }).map(function (k) {
         return '<div class="camcount"><span>' + esc(camName(k === '_' ? null : k)) + '</span><b>' + plural(t.byCam[k], 'visit') + (hasLoc() ? ' <span class="muted" style="font-weight:400">· ' + (t.litByCam[k] || 0) + ' daylight</span>' : '') + '</b></div>';
       }).join('') + '</div>';
@@ -1586,7 +1586,7 @@
   function sim3dHtml() {
     if (!isElite()) {
       var t = tier();
-      return '<div class="paper" id="t3-locked"><h3>🔒 3D Terrain Sim is Elite</h3><p class="small">Your real ground in 3D from USGS elevation, with wind, rising and sinking air and your moving scent. Stands turn teal, amber or crimson with a plain reason, and it finds your safest walk-in. Pick a real day and slide through it.</p>' +
+      return '<div class="paper" id="t3-locked"><h3>🔒 3D Terrain Sim is Elite</h3><p class="small">Your real ground in 3D from USGS elevation, with wind, rising and sinking air and your moving scent. Stands turn teal, amber or crimson with the reason why, and it finds your safest walk-in. Pick a real day and slide through it.</p>' +
         (t === 'pro' ? buyBtn('upgrade', 'Upgrade to Elite') : buyBtn('elite', 'Get Elite')) + (proOnSale() ? '<a class="btn ink block" style="margin-top:8px" href="#/more">I have a license key</a>' : '') + '</div>' +
         '<div class="paper"><h3>Try it on the Example property</h3><p class="tiny muted" style="margin:0 0 6px">Example property. Not your land.</p><div id="t3-root"></div><p class="t3-credit">Example aerial photo: USDA NAIP via USGS, flown October 2023. Elevation: USGS 3DEP lidar. Map services and data available from U.S. Geological Survey, National Geospatial Program.</p></div>';
     }

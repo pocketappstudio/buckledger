@@ -86,8 +86,9 @@ select{appearance:none;-webkit-appearance:none;background-image:linear-gradient(
 .tray .commit{display:grid;grid-template-columns:1fr 1fr 1.4fr;gap:6px;margin-top:6px}
 .tok.empty{background:#e6dcc0}
 /* stamp reader */
-.stamp{position:relative;width:100%;height:120px;overflow:hidden;border-radius:10px;background:#000;border:2px solid var(--acc)}
-.stamp img{position:absolute;left:0;width:250%;max-width:none}
+.stamp{position:relative;width:100%;overflow:hidden;border-radius:10px;background:#000;border:2px solid var(--acc)}
+.stamp canvas{display:block;width:100%;height:120px}
+.stamp-ctl{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:8px 0 0}.stamp-ctl label{display:flex;align-items:center;gap:4px;font-size:18px;color:var(--acc,#d9822b)}.stamp-ctl input{width:100%;min-height:32px;accent-color:#d9822b}
 .stamp-full{width:100%;border-radius:10px;display:block;margin-bottom:8px}
 .dt2{display:grid;grid-template-columns:1.2fr 1fr;gap:8px}
 /* buck page */

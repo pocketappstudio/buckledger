@@ -950,15 +950,18 @@
 
   /* ---------------- Stamp Reader ---------------- */
   // For photos with no time in the file: zoom into the strip where cams print the time, and type it.
-  var stampBand = 'bottom', stampLastDate = '';
+  var stampBand = 'bottom', stampLastDate = '', stampFor = null;
   VIEWS.stamp = function () {
     var q = P.filter(function (p) { return !p.t; }).sort(function (a, b) { return a.name.localeCompare(b.name, undefined, { numeric: true }); });
     var p = R.id && PI[R.id] && !PI[R.id].t ? PI[R.id] : q[0];
     var h = head('Stamp Reader', '#/');
     if (!p) return h + '<div class="paper welcome"><div class="big">🕑</div><h2 style="font-family:Georgia,serif">Every photo has a time</h2><p class="muted">When a camera doesn’t save the time in the file, those photos show up here so you can type the time printed on them.</p><a class="btn go" href="#/">Back to the Ledger</a></div>';
-    var url = thumbURL(p), fd = parseLocal(p.fileT);
+    var url = thumbURL(p), fd = parseLocal(p.fileT); if (stampFor !== p.id) { stampFor = p.id; stampY = null; stampX = 0; }
     h += '<p class="small muted" style="margin-top:-4px">' + plural(q.length, 'photo') + ' without a time · ' + esc(camName(p.cam)) + ' · <span class="mono">' + esc(p.name) + '</span></p>' +
-      (url ? '<div class="stamp" id="stamp-zoom"><img alt="Zoomed time stamp" src="' + url + '" style="' + (stampBand === 'bottom' ? 'bottom:0;transform:translateX(' + stampShift + '%)' : 'top:0;transform:translateX(' + stampShift + '%)') + '"></div>' +
+      (url ? '<div class="stamp" id="stamp-zoom" data-band="' + stampBand + '"><canvas id="stamp-cv" aria-label="Zoomed time stamp"></canvas></div>' +
+        '<div class="stamp-ctl"><label title="Slide sideways">⇆<input type="range" id="stamp-x" min="0" max="100" step="0.5" value="' + stampX + '"></label>' +
+        '<label title="Move up or down">⇅<input type="range" id="stamp-y" min="0" max="100" step="0.25" value="0"></label>' +
+        '<label title="Band size">⤢<input type="range" id="stamp-sz" min="50" max="250" step="5" value="' + Math.round(stampSize * 100) + '"></label></div>' +
         '<div class="btn-row" style="margin:8px 0"><button class="btn sm" data-act="stamp-band">' + (stampBand === 'bottom' ? 'Stamp is at the top' : 'Stamp is at the bottom') + '</button><button class="btn sm" data-act="stamp-pan">Slide ⇆</button></div>' +
         '<img class="stamp-full" alt="Full photo" src="' + url + '">' : '<div class="panel">No picture for this file.</div>') +
       '<div class="paper"><div class="dt2"><label class="field"><span>Date on the photo</span><input type="date" id="stamp-date" value="' + esc(stampLastDate) + '"></label><label class="field"><span>Time on the photo</span><input type="time" id="stamp-time" step="1"></label></div>' +
@@ -968,8 +971,71 @@
       '<p class="tiny muted" style="margin:8px 0 0">The file date is often when the card was copied, not when the photo was taken. Only use it if you know it’s right.</p></div>';
     return h;
   };
-  var stampShift = 0;
-  VIEWS.stamp.after = function () { var d = $('#stamp-date'); if (d && !d.value) d.focus(); };
+  /* Stamp band. Works on screenshots too: black letterbox and phone status / app bars are trimmed first (rows or columns
+     that are almost one solid colour, far from the photo), the band is sized from the photo's own shape, and the
+     sliders move it anywhere on the whole image (sideways, up/down) and resize it. */
+  var stampX = 0, stampSize = 1, stampY = null, stampImg = null, stampRect = null;
+  function stampTrim(img) {
+    var W = img.naturalWidth, H = img.naturalHeight, s = Math.min(1, 320 / Math.max(W, H)), w = Math.max(1, Math.round(W * s)), h = Math.max(1, Math.round(H * s));
+    var c = document.createElement('canvas'); c.width = w; c.height = h; var g = c.getContext('2d'); g.drawImage(img, 0, 0, w, h);
+    // only screenshots / letterboxed frames: trail cams shoot 4:3 to 16:9, so a normal photo is never trimmed
+    if (!(H / W > 1.5 || W / H > 2.1)) return { x: 0, y: 0, w: W, h: H, trimmed: false };
+    var d; try { d = g.getImageData(0, 0, w, h).data; } catch (e) { return { x: 0, y: 0, w: W, h: H, trimmed: false }; }
+    function lum(i) { return d[i] * 0.3 + d[i + 1] * 0.59 + d[i + 2] * 0.11; }
+    function flat(n, at) {   // share of pixels on this line within 12 of the line's middle value
+      var v = []; for (var k = 0; k < n; k++) v.push(lum(at(k)));
+      var m = v.slice().sort(function (a, b) { return a - b; })[n >> 1], f = 0, sat = 0; v.forEach(function (x) { if (Math.abs(x - m) < 12) f++; });
+      for (var k2 = 0; k2 < n; k2 += 4) { var i2 = at(k2); sat += Math.max(d[i2], d[i2 + 1], d[i2 + 2]) - Math.min(d[i2], d[i2 + 1], d[i2 + 2]); }
+      return sat / Math.ceil(n / 4) > 24 ? Math.min(f / n, 0.9) : f / n;   // phone bars are black, grey or white, not coloured
+    }
+    function span(len, frac) {   // longest run of photo lines, then grow through stamp ribbons (short solid gaps allowed)
+      var bar = frac.map(function (f) { return f > 0.97; }), best = [0, len], run = -1, bl = 0;
+      for (var i = 0; i <= len; i++) { if (i < len && !bar[i]) { if (run < 0) run = i; } else if (run >= 0) { if (i - run > bl) { bl = i - run; best = [run, i]; } run = -1; } }
+      if (bl < len * 0.12) return [0, len];
+      var gap = Math.max(2, Math.round(bl * 0.03)), grow = Math.round(bl * 0.2);
+      function ext(a, dir) { var p = a, solid = 0, last = a; for (var k = 0; k < grow; k++) { var q = p + dir; if (q < 0 || q >= len) { last = dir > 0 ? len - 1 : 0; break; } p = q; if (!bar[p] || frac[p] < 0.995) { solid = 0; last = p; } else if (++solid > gap) break; } return last; }
+      var a = ext(best[0], -1), b = ext(best[1] - 1, 1) + 1;
+      if (a <= gap) a = 0; if (b >= len - gap) b = len;
+      return [a, b];
+    }
+    var rf = []; for (var y = 0; y < h; y++) rf.push(flat(w, function (k) { return (y * w + k) * 4; }));
+    var ry = span(h, rf), cf = [];
+    for (var x = 0; x < w; x++) cf.push(flat(ry[1] - ry[0], function (k) { return ((ry[0] + k) * w + x) * 4; }));
+    var rx = span(w, cf);
+    var R2 = { x: Math.round(rx[0] / s), y: Math.round(ry[0] / s), w: Math.round((rx[1] - rx[0]) / s), h: Math.round((ry[1] - ry[0]) / s) };
+    R2.w = Math.min(R2.w, W - R2.x); R2.h = Math.min(R2.h, H - R2.y); R2.trimmed = R2.w < W * 0.98 || R2.h < H * 0.98; return R2;
+  }
+  window.BLStampTrim = stampTrim;
+  function stampGeom() {
+    var img = stampImg, r = stampRect; if (!img || !r) return null;
+    var W = img.naturalWidth, H = img.naturalHeight, wide = r.w >= r.h;
+    var vw = Math.min(W, r.w * (wide ? 0.55 : 0.62) * stampSize), bh = Math.min(H, r.h * (wide ? 0.13 : 0.09) * stampSize);
+    if (stampY === null) { var y0 = stampBand === 'bottom' ? r.y + r.h - bh : r.y; stampY = H > bh ? Math.max(0, Math.min(100, (y0 / (H - bh)) * 100)) : 0; }
+    var x = (W - vw) * stampX / 100, y = (H - bh) * stampY / 100;
+    return { x: x, y: y, w: vw, h: bh, W: W, H: H };
+  }
+  function stampDraw() {
+    var cv = $('#stamp-cv'), box = $('#stamp-zoom'), G = stampGeom(); if (!cv || !box || !G) return;
+    var cw = box.clientWidth || 340, ch = Math.round(cw * G.h / G.w);
+    if (ch > 300) { ch = 300; } if (ch < 90) { ch = 90; }
+    var sh = G.w * ch / cw, sy = Math.max(0, Math.min(G.H - sh, G.y + G.h / 2 - sh / 2));   // keep the picture undistorted
+    var dpr = window.devicePixelRatio || 1; cv.style.height = ch + 'px'; cv.width = Math.round(cw * dpr); cv.height = Math.round(ch * dpr);
+    var g = cv.getContext('2d'); g.imageSmoothingQuality = 'high'; g.fillStyle = '#000'; g.fillRect(0, 0, cv.width, cv.height);
+    g.drawImage(stampImg, G.x, sy, G.w, Math.min(sh, G.H), 0, 0, cv.width, cv.height * Math.min(1, G.H / sh));
+    var yi = $('#stamp-y'); if (yi && document.activeElement !== yi) yi.value = stampY;
+    box.setAttribute('data-y', Math.round(G.y)); box.setAttribute('data-h', Math.round(G.h));
+    window.__stampInfo = { rect: stampRect, band: stampBand, x: Math.round(G.x), y: Math.round(G.y), w: Math.round(G.w), h: Math.round(G.h), W: G.W, H: G.H, size: stampSize };
+  }
+  VIEWS.stamp.after = function () {
+    var d = $('#stamp-date'); if (d && !d.value) d.focus();
+    var cv = $('#stamp-cv'), full = $('.stamp-full'); if (!cv || !full) return;
+    stampImg = null; stampRect = null; window.__stampInfo = null;
+    var im = new Image(); im.onload = function () { if (!document.body.contains(cv)) return; stampImg = im; stampRect = stampTrim(im); stampDraw(); }; im.src = full.getAttribute('src');
+    $('#stamp-x').addEventListener('input', function (e) { stampX = Number(e.target.value); stampDraw(); });
+    $('#stamp-y').addEventListener('input', function (e) { stampY = Number(e.target.value); stampDraw(); });
+    $('#stamp-sz').addEventListener('input', function (e) { var G0 = stampGeom(), c0 = G0 ? G0.y + G0.h / 2 : 0; stampSize = Number(e.target.value) / 100; if (G0) { var G1 = stampGeom(); stampY = G1.H > G1.h ? Math.max(0, Math.min(100, (c0 - G1.h / 2) / (G1.H - G1.h) * 100)) : 0; } stampDraw(); });
+  };
+  window.addEventListener('resize', function () { if ($('#stamp-cv')) stampDraw(); });
   function stampSave(id, useFile) {
     var p = PI[id]; if (!p) return;
     var v;
@@ -1813,8 +1879,8 @@
       case 'pull-again': pullState = null; render(); return;
       case 'more-rows': ledgerLimit += 200; render(); return;
       case 'sort-undo': sortUndoLast(); return;
-      case 'stamp-band': stampBand = stampBand === 'bottom' ? 'top' : 'bottom'; render(); return;
-      case 'stamp-pan': stampShift = stampShift <= -60 ? 0 : stampShift - 30; var im = $('#stamp-zoom img'); if (im) im.style.transform = 'translateX(' + stampShift + '%)'; return;
+      case 'stamp-band': stampBand = stampBand === 'bottom' ? 'top' : 'bottom'; stampY = null; render(); return;
+      case 'stamp-pan': stampX = stampX >= 100 ? 0 : Math.min(100, stampX + 25); var sx = $('#stamp-x'); if (sx) sx.value = stampX; stampDraw(); return;
       case 'stamp-save': stampSave(id, false); return;
       case 'stamp-filedate': stampSave(id, true); return;
       case 'stamp-skip': {

@@ -20,7 +20,10 @@
   // find the solid dark ribbon at the bottom (or top) edge; returns a black-on-white, 2x upscaled canvas
   function band(img, where) {
     var W = img.naturalWidth, H = img.naturalHeight, c = document.createElement('canvas'); c.width = W; c.height = H;
-    var g = c.getContext('2d'); g.drawImage(img, 0, 0); var d = g.getImageData(0, 0, W, H).data;
+    // screenshots: crop to the photo first (black bars, phone status / app bars trimmed), so the ribbon sits at the edge
+    var r = window.BLStampTrim ? window.BLStampTrim(img) : null;
+    if (r && r.trimmed && r.w > 20 && r.h > 20) { W = r.w; H = r.h; c.width = W; c.height = H; }
+    var g = c.getContext('2d'); if (r && r.trimmed && r.w > 20 && r.h > 20) g.drawImage(img, r.x, r.y, W, H, 0, 0, W, H); else g.drawImage(img, 0, 0); var d = g.getImageData(0, 0, W, H).data;
     function dark(y) { var n = 0, k = 0; for (var x = 0; x < W; x += 8) { var i = (y * W + x) * 4; if (d[i] * 0.3 + d[i + 1] * 0.59 + d[i + 2] * 0.11 < 40) n++; k++; } return n / k > 0.6; }
     var y0, y1;
     if (where === 'top') { y1 = 0; while (y1 < H * 0.2 && dark(y1)) y1++; y0 = 0; if (y1 - y0 < 8) return null; }

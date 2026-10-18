@@ -1001,6 +1001,17 @@
     (function () {
       var dm = items.some(function (it) { return it.stampT && it.order === 'dm'; }), md = items.some(function (it) { return it.stampT && it.order === 'md'; });
       if (!dm || md) return;
+      /* guard: a single misread digit (e.g. 10 read as 16) must not flip the card. Swap only when the swapped dates sit closer to the unambiguous day-first dates than the unswapped ones. */
+      var anc = items.filter(function (it) { return it.stampT && it.order === 'dm'; }).map(function (it) { return ymdT(it.stampT); }), dA = [], dB = [];
+      items.forEach(function (it) {
+        if (it.order !== 'amb' || !it.stampT) return;
+        var sw = it.stampT.slice(0, 4) + '-' + it.stampT.slice(8, 10) + '-' + it.stampT.slice(5, 7) + it.stampT.slice(10), a = ymdT(it.stampT), c = ymdT(sw);
+        if (isNaN(a) || isNaN(c)) return;
+        var mn = function (v) { return Math.min.apply(null, anc.map(function (x) { return Math.abs(x - v); })); };
+        dA.push(mn(a)); dB.push(mn(c));
+      });
+      var med = function (a) { a.sort(function (x, y) { return x - y; }); return a.length ? a[a.length >> 1] : 0; };
+      if (dA.length && med(dB) >= med(dA)) return;
       items.forEach(function (it) {
         if (it.order !== 'amb' || !it.stampT) return;
         var y = it.stampT.slice(0, 4), mo = it.stampT.slice(5, 7), d = it.stampT.slice(8, 10), t2 = y + '-' + d + '-' + mo + it.stampT.slice(10), p2 = parseLocal(t2);

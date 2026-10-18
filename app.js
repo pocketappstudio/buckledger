@@ -4,7 +4,7 @@
   'use strict';
   var C = window.BUCKLEDGER_CONFIG || {};
   var APP = C.APP_NAME || 'Buck Ledger';
-  var SCHEMA = 1;
+  var SCHEMA = 2;
   var KINDS = [
     { id: 'buck', label: 'Buck' }, { id: 'doe', label: 'Doe' }, { id: 'fawn', label: 'Fawn' },
     { id: 'other', label: 'Other' }, { id: 'empty', label: 'Empty' }
@@ -98,13 +98,13 @@
   var P = [];         // photo records (with thumb Blobs)
   var PI = {};        // id -> photo
   function defaults() {
-    return { schema: SCHEMA, cameras: [], deer: [], pulls: [], map: null, bait: [], preds: [], t3: null, settings: { lat: null, lng: null, shootMin: 30, gapMin: 20, license: null, deviceId: null, lastBackup: null, lastCam: null, installDismissed: false, createdAt: Date.now(), states: [], areas: {}, hideSmall: true, smallMax: 5, statesAsked: false } };
+    return { schema: SCHEMA, cameras: [], deer: [], pulls: [], pins: [], map: null, bait: [], preds: [], t3: null, settings: { lat: null, lng: null, shootMin: 30, gapMin: 20, license: null, deviceId: null, lastBackup: null, lastCam: null, installDismissed: false, createdAt: Date.now(), states: [], areas: {}, hideSmall: true, smallMax: 5, statesAsked: false } };
   }
   function num(v, lo, hi, def) { v = Number(v); return (v !== null && v !== '' && isFinite(v) && v >= lo && v <= hi) ? v : def; }
   function migrate(s) {
     var d = defaults();
     if (!s || typeof s !== 'object') return d;
-    var out = { schema: SCHEMA, cameras: [], deer: [], pulls: [], map: null, bait: [], preds: [], t3: null, settings: d.settings };
+    var out = { schema: SCHEMA, cameras: [], deer: [], pulls: [], pins: [], map: null, bait: [], preds: [], t3: null, settings: d.settings };
     var st = (s.settings && typeof s.settings === 'object') ? s.settings : {};
     ['license', 'deviceId', 'lastBackup', 'lastCam', 'installDismissed', 'createdAt'].forEach(function (k) { if (st[k] !== undefined) out.settings[k] = st[k]; });
     out.settings.lat = (st.lat === null || st.lat === undefined || st.lat === '') ? null : num(st.lat, -90, 90, null);
@@ -150,6 +150,7 @@
     out.map = (window.BuckSim && s.map) ? window.BuckSim.clean(s.map) : null;
     var camOk = {}; out.cameras.forEach(function (c) { camOk[c.id] = 1; });
     var deerOk = {}; out.deer.forEach(function (b) { deerOk[b.id] = 1; });
+    out.pins = window.BLPins ? window.BLPins.clean(s.pins, camOk, deerOk, uid) : [];   // Bring Your Pins (older data has none)
     (Array.isArray(s.bait) ? s.bait : []).slice(0, 2000).forEach(function (b) {
       if (!b || typeof b !== 'object' || !camOk[b.cam] || !/^\d{4}-\d\d-\d\d$/.test(String(b.day))) return;
       out.bait.push({ id: clampStr(b.id || uid(), 40), cam: b.cam, day: String(b.day), what: clampStr(b.what, 60) });
@@ -179,7 +180,9 @@
       tags: tags, deer: dr, done: !!p.done && (tags.length + dr.length > 0),
       thumb: p.thumb instanceof Blob ? p.thumb : null, added: num(p.added, 0, 1e14, Date.now()),
       temp: (p.temp === null || p.temp === undefined || p.temp === '') ? null : num(p.temp, -40, 130, null), tempSrc: p.tempSrc === 'ocr' ? 'ocr' : (p.temp !== null && p.temp !== undefined && p.temp !== '' ? 'typed' : null),
-      dir: ['L', 'R', 'T', 'A'].indexOf(p.dir) >= 0 ? p.dir : null, zone: typeof p.zone === 'string' ? p.zone.slice(0, 30) : null
+      dir: ['L', 'R', 'T', 'A'].indexOf(p.dir) >= 0 ? p.dir : null, zone: typeof p.zone === 'string' ? p.zone.slice(0, 30) : null,
+      hash: /^[0-9a-f]{64}$/.test(String(p.hash)) ? p.hash : '', dh: /^[0-9a-f]{16}$/.test(String(p.dh)) ? p.dh : '', w: num(p.w, 0, 100000, 0), h: num(p.h, 0, 100000, 0),
+      stamp: p.stamp && typeof p.stamp === 'object' ? { date: clampStr(p.stamp.date, 10), time: clampStr(p.stamp.time, 8), name: clampStr(p.stamp.name, 24) } : null
     };
   }
   var saveTimer = null;
@@ -672,7 +675,7 @@
     if (hidden) { nav.innerHTML = ''; return; }
     var u = unsortedCount();
     var items = [['ledger', '#/', 'Ledger'], ['sort', '#/sort', 'Sort Pass'], ['bucks', '#/bucks', 'Bucks'], ['cams', '#/cams', 'Cameras'], ['sim', '#/sim', 'Simulator'], ['more', '#/more', 'More']];
-    var on = { buck: 'bucks', photo: 'ledger', pull: 'ledger', stamp: 'ledger', clock: 'cams', cam: 'cams', predict: 'bucks', states: 'more', research: 'more' }[R.view] || R.view;
+    var on = { buck: 'bucks', photo: 'ledger', pull: 'ledger', stamp: 'ledger', clock: 'cams', cam: 'cams', predict: 'bucks', states: 'more', research: 'more', pins: 'more', pinhow: 'more', tcl: 'more' }[R.view] || R.view;
     nav.innerHTML = items.map(function (it) {
       return '<a href="' + it[1] + '" class="' + (on === it[0] ? 'on' : '') + '" data-nav="' + it[0] + '">' + ICONS[it[0]] + it[2] + (it[0] === 'sort' && u ? '<span class="badge">' + (u > 999 ? '999+' : u) + '</span>' : '') + '</a>';
     }).join('');
@@ -693,12 +696,13 @@
       return h + '<div class="paper welcome"><div class="big">📒</div><h2 style="font-family:Georgia,serif">Your trail cam logbook</h2>' +
         '<p class="muted">It fills itself in from your SD card. Photos never leave this phone. No account, no subscription.</p>' +
         '<ol class="steps"><li><b>Log a Pull:</b> pick a camera and the photos from its card.</li><li><b>Sort Pass:</b> one photo at a time, tap who it is.</li><li><b>Read the Ledger:</b> every visit, when and where, in daylight or dark.</li></ol>' +
-        '<a class="btn go block" href="#/pull" data-act="first-pull">Log your first Pull</a></div>' + filesTip() + installNote();
+        '<a class="btn go block" href="#/pull" data-act="first-pull">Log your first Pull</a><a class="btn ink block" style="margin-top:8px" href="#/bulk" id="first-bulk">Lots of photos? Bulk import reads the stamps for you</a></div>' + filesTip() + installNote();
     }
     var u = unsortedCount(), nt = noTimeCount();
     h += '<div class="actions"><a class="act main" href="#/pull"><b>Log a Pull</b><span>add photos</span></a>' +
       '<a class="act ' + (u ? 'hot' : '') + '" href="#/sort" id="act-sort"><b>Sort Pass</b><span>' + (u ? u + ' waiting' : 'all sorted ✓') + '</span></a>' +
       '<a class="act ' + (nt ? 'hot' : '') + '" href="#/stamp" id="act-stamp"><b>Stamp Reader</b><span>' + (nt ? nt + ' need a time' : 'all timed ✓') + '</span></a></div>';
+    h += '<a class="act" href="#/bulk" id="act-bulk" style="margin:-4px 0 12px"><b>Bulk import</b><span>Pick up to ' + BULK_MAX + ' photos. Dates, times and temps are read for you.</span></a>';
     if (!S.settings.states.length && !S.settings.statesAsked) h += '<div class="panel small" id="state-prompt">📍 <b>Where do you hunt?</b> Pick your state for rut timing and acorn info. <a class="btn sm go" href="#/states">Pick state</a> <button class="btn sm plain" data-act="states-later">Later</button></div>';
     var whoOpts = SUBJECTS.concat(visibleDeer().map(function (b) { return ['deer:' + b.id, '★ ' + b.name]; }));
     if (!whoOpts.some(function (o) { return o[0] === ledgerF.who; })) ledgerF.who = 'all';
@@ -767,7 +771,7 @@
     if (pullState && pullState.finished) {
       var r = pullState;
       return h + '<div class="paper" id="pull-result"><h3 style="font-family:Georgia,serif">Pull logged: ' + plural(r.added, 'photo') + ' from ' + esc(camName(r.cam)) + '</h3><ul class="small" style="padding-left:18px;margin:6px 0 12px">' +
-        (r.dup ? '<li>' + plural(r.dup, 'duplicate') + ' skipped (already in your ledger)</li>' : '') +
+        (r.dup && window.BLDedup ? '<li style="list-style:none;margin-left:-18px">' + BLDedup.reviewHtml(r.dups, r.dupOpen) + '</li>' : r.dup ? '<li>' + plural(r.dup, 'duplicate') + ' skipped (already in your ledger)</li>' : '') +
         (r.skipped ? '<li>' + plural(r.skipped, 'file') + ' skipped (videos or not photos)</li>' : '') +
         (r.failedThumb ? '<li>' + plural(r.failedThumb, 'photo') + ' couldn’t be opened by this browser (kept without a picture)</li>' : '') +
         (r.noTime ? '<li><b>' + plural(r.noTime, 'photo') + ' had no date/time in the file.</b> Use the Stamp Reader to type the time printed on them.</li>' : (r.added ? '<li>Every photo had a date and time ✓</li>' : '')) + '</ul>' +
@@ -777,6 +781,7 @@
     }
     var opts = S.cameras.map(function (c) { return '<option value="' + esc(c.id) + '"' + (S.settings.lastCam === c.id ? ' selected' : '') + '>' + esc(c.name) + '</option>'; }).join('');
     var canNew = canAddCam();
+    h += '<a class="btn ink block" id="pull-bulk" style="margin:0 0 10px" href="#/bulk">⚡ Many photos? Bulk import reads the dates, times and temps for you</a>';
     h += '<div class="paper"><label class="field"><span>Which camera is this card from?</span><select id="pull-cam">' + opts + (canNew ? '<option value="__new"' + (!S.cameras.length ? ' selected' : '') + '>＋ New camera…</option>' : '') + '</select></label>' +
       '<label class="field" id="pull-new-wrap" style="display:' + (!S.cameras.length ? 'block' : 'none') + '"><span>Camera name</span><input type="text" id="pull-new" maxlength="60" placeholder="e.g. Creek crossing, Food plot, Stand East"></label>' +
       (!canNew ? '<p class="small muted">' + freeLine('cam') + '</p>' : '') +
@@ -838,11 +843,12 @@
     });
   }
   function isImageFile(f) { return /^image\//.test(f.type || '') || /\.(jpe?g|png|heic|heif|webp)$/i.test(f.name || ''); }
-  function runPull(files, camId) {
+  function runPull(files, camId, force) {
     S.settings.lastCam = camId; save();
     var pull = { id: uid(), cam: camId, at: Date.now(), count: 0, noTime: 0 };
     var seen = {}; P.forEach(function (p) { seen[p.name + '|' + p.size + '|' + (p.tsrc === 'exif' ? p.t : '')] = 1; });
-    pullState = { running: true, total: files.length, done: 0, added: 0, dup: 0, skipped: 0, noTime: 0, failedThumb: 0, pull: pull.id, cam: camId };
+    var dIdx = force || !window.BLDedup ? null : BLDedup.buildIndex(P);
+    pullState = { running: true, dups: [], dupOpen: false, force: !!force, total: files.length, done: 0, added: 0, dup: 0, skipped: 0, noTime: 0, failedThumb: 0, pull: pull.id, cam: camId };
     if (R.view !== 'pull') go('#/pull'); else render();
     var pending = [];
     function upd() { var s = $('#pull-status'), b = $('#pull-bar'); if (s) s.textContent = pullState.done + ' of ' + pullState.total; if (b) b.style.width = (pullState.done / pullState.total * 100) + '%'; }
@@ -855,17 +861,26 @@
       return readHead(f, 262144).then(function (buf) { return readExif(buf); }, function () { return null; }).then(function (ex) {
         var dt = ex && ex.dt;
         var key = f.name + '|' + f.size + '|' + (dt || '');
-        if (seen[key]) { pullState.dup++; return null; }
+        if (seen[key] && !force) { pullState.dup++; pullState.dups.push({ file: f, name: f.name, why: 'exif', ofName: '' }); return null; }
         seen[key] = 1;
-        return makeThumb(f).then(function (thumb) {
+        var fpP = window.BLDedup ? BLDedup.fingerprint(f, { exifT: dt || null, camId: camId }) : Promise.resolve(null);
+        return fpP.then(function (fp) {
+          if (fp && dIdx) {
+            var m = BLDedup.match(dIdx, fp);
+            if (m) { pullState.dup++; pullState.dups.push({ file: f, name: f.name, why: m.why, ofName: m.of.name || '' }); return null; }
+          }
+          return makeThumb(f).then(function (thumb) { return saveOne(thumb, fp); });
+        });
+        function saveOne(thumb, fp) {
           if (!thumb) pullState.failedThumb++;
           if (!dt) pullState.noTime++;
           var fd = f.lastModified ? new Date(f.lastModified) : null;
           var p = { id: uid(), cam: camId, pull: pull.id, name: clampStr(f.name, 200), size: f.size || 0, t: dt || null, tsrc: dt ? 'exif' : null,
             fileT: fd && !isNaN(fd) ? toLocalStr(fd) : null, tags: [], deer: [], done: false, thumb: thumb, added: Date.now() };
+          if (fp) { var fl = BLDedup.fields(fp); p.hash = fl.hash; p.dh = fl.dh; p.tv = fl.tv; p.w = fl.w; p.h = fl.h; if (dIdx) BLDedup.add(dIdx, BLDedup.entryFromFp(fp, { id: p.id, name: p.name })); }
           P.push(p); PI[p.id] = p; pending.push(p); pullState.added++;
           if (pending.length >= 10) return flushPending();
-        });
+        }
       }).then(function () { pullState.done++; upd(); return next(); }, function () { pullState.done++; upd(); return next(); });
     }
     function finish() {
@@ -879,6 +894,461 @@
   }
   function requestPersist() {
     try { if (navigator.storage && navigator.storage.persist) navigator.storage.persisted().then(function (p) { if (!p) return navigator.storage.persist(); }).catch(function () {}); } catch (e) {}
+  }
+
+  /* ---------------- Bulk import ---------------- */
+  // Pick up to BULK_MAX photos at once. Each one is decoded once (thumbnail + stamp read), one photo at a time with a pause
+  // between photos so the screen stays alive; the OCR itself runs in its own worker thread. Everything stays on this phone.
+  var BULK_MAX = 300, GROUP_S = 120, OUTLIER_DAYS = 45;
+  var bulk = null;
+  function bulkFree() { if (bulk) { bulk.items.forEach(function (it) { if (it.mini) { try { URL.revokeObjectURL(it.mini); } catch (e) {} it.mini = null; } }); } }
+  function ymdT(s) { var d = parseLocal(s); return d ? d.getTime() : null; }
+  function lev1(a, b) {
+    if (a === b) return true; if (Math.abs(a.length - b.length) > 1) return false;
+    var i = 0, j = 0, e = 0;
+    while (i < a.length && j < b.length) { if (a[i] === b[j]) { i++; j++; continue; } if (++e > 1) return false; if (a.length > b.length) i++; else if (a.length < b.length) j++; else { i++; j++; } }
+    return e + (a.length - i) + (b.length - j) <= 1;
+  }
+  function nameKey(s) { return normName(s).replace(/FI/g, 'H'); }   // FI is often read as H
+  function lev(a, b) {
+    var p = [], i, j; for (j = 0; j <= b.length; j++) p[j] = j;
+    for (i = 1; i <= a.length; i++) { var q = [i]; for (j = 1; j <= b.length; j++) q[j] = Math.min(p[j] + 1, q[j - 1] + 1, p[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)); p = q; }
+    return p[b.length];
+  }
+  function nameSame(a, b) {
+    var x = nameKey(a), y = nameKey(b), m = Math.min(x.length, y.length);
+    if (m < 4) return x === y && m > 0;
+    return x.indexOf(y) >= 0 || y.indexOf(x) >= 0 || (m >= 5 && lev(x, y) <= 2);
+  }
+  function normName(s) { return String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, ''); }
+  function ensureOcr() { return window.BLOcr ? Promise.resolve() : new Promise(function (res, rej) { var sc = document.createElement('script'); sc.src = 'ocr.js'; sc.onload = res; sc.onerror = rej; document.head.appendChild(sc); }); }
+  function bulkLoad(f) {
+    return new Promise(function (res) {
+      var url; try { url = URL.createObjectURL(f); } catch (e) { return res(null); }
+      var img = new Image(), done = false;
+      var to = setTimeout(function () { if (!done) { done = true; URL.revokeObjectURL(url); res(null); } }, 20000);
+      img.onload = function () { if (done) return; done = true; clearTimeout(to); res({ img: img, url: url }); };
+      img.onerror = function () { if (done) return; done = true; clearTimeout(to); URL.revokeObjectURL(url); res(null); };
+      img.src = url;
+    });
+  }
+  function imgBlob(img, max, q) {
+    return new Promise(function (res) {
+      try {
+        var w = img.naturalWidth, h = img.naturalHeight, s = Math.min(1, max / Math.max(w, h)), c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(w * s)); c.height = Math.max(1, Math.round(h * s));
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); c.toBlob(function (b) { res(b); }, 'image/jpeg', q);
+      } catch (e) { res(null); }
+    });
+  }
+  function tick() { return new Promise(function (r) { setTimeout(r, 0); }); }
+  function bulkNote(it, s) { it.notes.push(s); }
+  // EXIF time counts only when it is a real, non-reset, non-future date (cameras with a dead clock battery write 1970/2000/0000)
+  function exifPlausible(dt) {
+    if (!dt || dt.length < 16) return false;
+    var y = +dt.slice(0, 4), d = parseLocal(dt); if (!d) return false;
+    return y >= 2002 && d.getTime() <= Date.now() + DAYMS;
+  }
+  var CROSS_MS = 2 * 60000;
+  function bulkInterpret(it, v) {
+    var ex = it.dt && exifPlausible(it.dt) ? it.dt : null, exT = ex ? ymdT(ex) : null;
+    // a temperature only counts from a credible stamp: date and time both read, or the °F and °C agree (noise in a plain photo can look like a number)
+    if (v && v.temp !== null && v.temp !== undefined && ((v.date && v.time) || v.tempSure)) { it.temp = v.temp; it.tempSrc = 'ocr'; if (v.tempDisagree && !v.tempSure) it.tempFlag = true; }
+    if (v && v.name) it.camText = v.name;
+    it.raw = v ? v.raw : ''; it.order = v && v.order ? v.order : null; it.dateFixed = !!(v && v.dateFixed);
+    var hasStamp = !!(v && v.date && v.time);
+    if (hasStamp) it.stampT = v.date + 'T' + v.time;
+    if (ex && hasStamp) {
+      // EXIF first; the printed stamp is the cross-check. The stamp has no seconds, so compare the minute it printed with the file time.
+      var df = Math.abs(exT - ymdT(it.stampT));
+      it.t = ex; it.tsrc = 'exif'; it.secKnown = ex.length >= 19;
+      if (df <= CROSS_MS) { it.conf = 'ok'; it.stampAgree = true; }
+      else {
+        it.conf = 'check'; it.alt = it.stampT; it.altSrc = 'stamp';
+        it.notes = ['The file says ' + fmtDate(parseLocal(ex)) + ' ' + fmtTime(parseLocal(ex)) + ', the stamp says ' + fmtDate(parseLocal(it.stampT)) + ' ' + fmtTime(parseLocal(it.stampT)) + '. The camera clock may be wrong.'];
+      }
+      if (it.tempFlag) { it.conf = 'check'; bulkNote(it, 'Check the temp.'); }
+    } else if (hasStamp) {
+      it.t = it.stampT; it.tsrc = 'stamp'; it.conf = v.agreed ? 'ok' : 'check';
+      if (!v.agreed) bulkNote(it, 'Digits read only once. Check the date and time.');
+      // the stamp has no seconds: take them from the file date when the minute is the same
+      var mn = it.t.slice(0, 16);
+      if (it.fileT && it.fileT.length >= 19 && it.fileT.slice(0, 16) === mn) { it.t = it.fileT; it.secKnown = true; }
+      if (it.tempFlag) { it.conf = 'check'; bulkNote(it, 'Check the temp.'); }
+      if (it.dateFixed && it.conf === 'ok') { it.conf = 'check'; bulkNote(it, 'One digit of the date looked off and was corrected. Check it.'); }
+    } else if (ex) {
+      it.t = ex; it.tsrc = 'exif'; it.secKnown = ex.length >= 19; it.conf = 'ok'; bulkNote(it, v && v.time ? 'Stamp date not readable; used the time saved in the photo file.' : 'Used the time saved in the photo file.');
+    } else {
+      it.conf = 'none'; it.partialTime = v && v.time ? v.time : ''; it.partialDate = v && v.date ? v.date : '';
+      bulkNote(it, it.noPic ? 'This browser can’t open the picture, and the file has no time.' : 'No readable stamp and no time in the file. Type it below, or leave it for the Stamp Reader.');
+    }
+  }
+  function bulkFinalize() {
+    var b = bulk, items = b.items, timed = items.filter(function (i) { return i.t; }).map(function (i) { return ymdT(i.t); }).sort(function (x, y) { return x - y; });
+    // camera names printed on the stamps: reads that are close (H/FI mix-ups, a letter or two off, one inside the other, e.g. FIELD / SW FIELD) are one name; only names seen on 3+ photos count
+    var cnt = {}; items.forEach(function (it) { if (it.camText) cnt[it.camText] = (cnt[it.camText] || 0) + 1; });
+    var keys = Object.keys(cnt).sort(function (x, y) { return cnt[y] - cnt[x] || y.length - x.length; }), canon = {}, tot = {};
+    keys.forEach(function (k) { var m = null; Object.keys(tot).forEach(function (o) { if (!m && nameSame(o, k)) m = o; }); if (m) { tot[m] += cnt[k]; canon[k] = m; } else { tot[k] = cnt[k]; canon[k] = k; } });
+    b.names = {}; Object.keys(tot).forEach(function (k) { if (tot[k] >= 3) b.names[k] = tot[k]; });
+    items.forEach(function (it) { it.camName = it.camText && b.names[canon[it.camText]] ? canon[it.camText] : ''; });
+    Object.keys(b.names).forEach(function (nm) {
+      var hits = S.cameras.filter(function (c) { return nameSame(c.name, nm); });
+      if (hits.length > 1) { var eq = hits.filter(function (c) { return nameKey(c.name) === nameKey(nm); }); hits = eq.length === 1 ? eq : []; }
+      if (hits.length === 1) { items.forEach(function (it) { if (it.camName === nm) it.cam = hits[0].id; }); b.names[nm] = { n: tot[nm], cam: hits[0].id }; }
+      else b.names[nm] = { n: tot[nm], cam: null };
+    });
+    /* Trail Cam Link: some cameras print DAY/MONTH. One photo that reads 17/10 settles the whole card: swap the ones that look like 03/10. */
+    (function () {
+      var dm = items.some(function (it) { return it.stampT && it.order === 'dm'; }), md = items.some(function (it) { return it.stampT && it.order === 'md'; });
+      if (!dm || md) return;
+      items.forEach(function (it) {
+        if (it.order !== 'amb' || !it.stampT) return;
+        var y = it.stampT.slice(0, 4), mo = it.stampT.slice(5, 7), d = it.stampT.slice(8, 10), t2 = y + '-' + d + '-' + mo + it.stampT.slice(10), p2 = parseLocal(t2);
+        if (!p2 || toLocalStr(p2).slice(0, 10) !== t2.slice(0, 10)) return;
+        if (it.tsrc === 'exif') {   // EXIF is the time; the swapped stamp may now agree with it
+          if (it.altSrc === 'stamp' && it.alt) {
+            it.alt = t2; it.order = 'dm'; it.swapped = true;
+            if (Math.abs(ymdT(it.t) - ymdT(t2)) <= CROSS_MS) { it.alt = null; it.altSrc = null; it.conf = it.tempFlag ? 'check' : 'ok'; it.notes = it.tempFlag ? ['Check the temp.'] : []; it.stampAgree = true; }
+            else it.notes = ['The file says ' + fmtDate(parseLocal(it.t)) + ' ' + fmtTime(parseLocal(it.t)) + ', the stamp says ' + fmtDate(p2) + ' ' + fmtTime(p2) + '. The camera clock may be wrong.'];
+          }
+          return;
+        }
+        if (it.tsrc !== 'stamp' || !it.t) return;
+        it.t = it.t.slice(0, 5) + it.t.slice(8, 10) + '-' + it.t.slice(5, 7) + it.t.slice(10); it.order = 'dm'; it.swapped = true;
+        bulkNote(it, 'This card prints day before month; date set to ' + fmtDate(p2) + '.');
+      });
+    })();
+    // a date far from the rest of the card is almost always a misread digit
+    if (timed.length >= 4) {
+      var med = timed[timed.length >> 1], lim = OUTLIER_DAYS * DAYMS;
+      items.forEach(function (it) {
+        if (it.tsrc !== 'stamp' || !it.t || Math.abs(ymdT(it.t) - med) <= lim) return;
+        if (it.alt && Math.abs(ymdT(it.alt) - med) <= lim) { it.conf = 'check'; return; }
+        var ds = it.t.slice(0, 10), tm = it.t.slice(10), conf = { '0': ['6', '8', '9'], '6': ['0', '8', '5'], '8': ['0', '6', '3'], '1': ['7'], '7': ['1'], '3': ['8'], '5': ['6'], '2': ['7'], '9': ['0', '8'] }, cands = [];
+        for (var i = 0; i < ds.length; i++) (conf[ds[i]] || []).forEach(function (r) { var c = ds.slice(0, i) + r + ds.slice(i + 1), d = parseLocal(c + tm); if (d && toLocalStr(d).slice(0, 10) === c && Math.abs(d.getTime() - med) <= lim && cands.indexOf(c) < 0) cands.push(c); });
+        it.conf = 'check';
+        if (cands.length === 1) { it.notes = ['Read as ' + fmtDate(parseLocal(it.t)) + '; the rest of the card is around ' + fmtDate(new Date(med)) + '. Changed to ' + fmtDate(parseLocal(cands[0] + tm)) + ', please check.']; it.t = cands[0] + tm; }
+        else it.notes = ['This date (' + fmtDate(parseLocal(it.t)) + ') is far from the rest of the card (around ' + fmtDate(new Date(med)) + '). Check the digits.'];
+      });
+    }
+  }
+  function bulkStart(files, camChoice, newName, pos) {
+    bulk = { phase: 'run', def: camChoice, newCams: [], newBucks: [], pos: pos || 'auto', items: [], total: 0, done: 0, dup: 0, skipped: 0, over: 0, stop: false, t0: Date.now(), t1: 0, sel: {}, names: {}, ocrOk: true, saved: null };
+    if (camChoice === '__new') { bulk.newCams.push({ key: 'n0', name: clampStr(newName, 60) }); bulk.def = 'n0'; }
+    var list = files.slice(0, BULK_MAX); bulk.over = files.length - list.length;
+    var imgs = list.filter(isImageFile); bulk.skipped = list.length - imgs.length; bulk.total = imgs.length;
+    if (!imgs.length) { bulk.phase = 'review'; bulk.t1 = Date.now(); go('#/bulk'); render(); return; }
+    // duplicate = same file name and size already saved (when both know the file's own time, those must match too)
+    var seen = {}; P.forEach(function (p) { (seen[p.name + '|' + p.size] = seen[p.name + '|' + p.size] || []).push(p.tsrc === 'exif' ? p.t : null); });
+    var dIdx = window.BLDedup ? BLDedup.buildIndex(P) : null, camReal = cam(bulk.def) ? bulk.def : null;
+    if (R.view !== 'bulk') go('#/bulk'); else render();
+    requestPersist();
+    function prep(f) {
+      return readHead(f, 262144).then(function (buf) { return readExif(buf); }, function () { return null; }).then(function (ex) {
+        var dt = ex && ex.dt, key = f.name + '|' + f.size, prior = seen[key] || [];
+        if (prior.some(function (x) { return x === null || !dt || x === dt; })) return { f: f, dup: true };
+        (seen[key] = prior).push(dt || null);
+        // same bytes as a photo already in the ledger (or earlier in this batch): skip before reading it
+        return (dIdx ? BLDedup.sha256(f) : Promise.resolve('')).then(function (hash) {
+          if (hash && dIdx.hash[hash]) return { f: f, dup: true };
+          if (hash) dIdx.hash[hash] = { id: null, name: f.name };   // later copies in this batch match it
+          return bulkLoad(f).then(function (L) {
+            var o = { f: f, dt: dt || null, L: L, hash: hash, dh: '', w: 0, h: 0 };
+            if (L && dIdx) { o.w = L.img.naturalWidth; o.h = L.img.naturalHeight; o.dh = BLDedup.dhashOf(L.img, o.w, o.h); o.tv = BLDedup.tvOf(L.img, o.w, o.h); }
+            return o;
+          });
+        });
+      }, function () { return { f: f, dup: true, err: true }; });
+    }
+    function upd() {
+      var s = $('#bulk-status'), bar = $('#bulk-bar'), el = (Date.now() - bulk.t0) / 1000, left = bulk.done ? Math.max(0, Math.round(el / bulk.done * (bulk.total - bulk.done))) : null;
+      if (s) s.textContent = bulk.done + ' of ' + bulk.total + (left !== null && bulk.done < bulk.total && !bulk.stop ? ' · about ' + (left >= 60 ? Math.ceil(left / 60) + ' min' : left + ' sec') + ' left' : '');
+      if (bar) bar.style.width = (bulk.total ? bulk.done / bulk.total * 100 : 0) + '%';
+    }
+    function item(o, v) {
+      var f = o.f, fd = f.lastModified ? new Date(f.lastModified) : null;
+      return { id: uid(), name: clampStr(f.name, 200), size: f.size || 0, dt: o.dt, fileT: fd && !isNaN(fd) ? toLocalStr(fd) : null, t: null, tsrc: null, temp: null, tempSrc: null, camText: '', camName: '', conf: 'none', notes: [], thumb: null, mini: null, cam: '', deer: '', raw: '', noPic: !o.L };
+    }
+    var i = 0, nextP = null;
+    function loop() {
+      if (i >= imgs.length) return Promise.resolve();
+      var cur = nextP || prep(imgs[i]); nextP = null; var idx = i++;
+      if (i < imgs.length && !bulk.stop) nextP = prep(imgs[i]);   // decode the next photo while this one is read
+      return cur.then(function (o) {
+        if (o.dup) { if (o.err) bulk.skipped++; else bulk.dup++; bulk.done++; upd(); return tick().then(loop); }
+        var it = item(o), L = o.L, work;
+        if (!L) work = Promise.resolve(null);
+        else work = imgBlob(L.img, 1280, 0.8).then(function (th) { it.thumb = th; return imgBlob(L.img, 180, 0.7); }).then(function (mi) { if (mi) { try { it.mini = URL.createObjectURL(mi); } catch (e) {} } });
+        return work.then(function () {
+          if (!L || bulk.stop || !bulk.ocrOk) return null;
+          return window.BLOcr.readStamp(L.img, bulk.pos).catch(function () { return null; });
+        }).then(function (v) {
+          bulkInterpret(it, v);
+          if (dIdx && o.hash && dIdx.hash[o.hash] && dIdx.hash[o.hash].id === null) delete dIdx.hash[o.hash];
+          if (dIdx && o.hash) {   // stamp + camera + temp, or a look-alike picture at the same time
+            var st = it.stampT ? { date: (it.stampAgree ? it.t : it.stampT).slice(0, 10), time: (it.stampAgree ? it.t : it.stampT).slice(11, 19), temp: it.tempFlag ? null : it.temp, name: it.camText } : { temp: it.tempFlag ? null : it.temp, name: it.camText };
+            var fp = BLDedup.build(o.f, o.hash, { dh: o.dh, tv: o.tv, w: o.w, h: o.h }, { exifT: o.dt, camId: camReal, stamp: st, sec: !!it.secKnown, minute: true }), m = BLDedup.match(dIdx, fp);
+            if (m && m.of.id !== null) { bulk.dup++; if (L) { try { URL.revokeObjectURL(L.url); } catch (e) {} L.img.src = ''; if (it.mini) { try { URL.revokeObjectURL(it.mini); } catch (e) {} } } bulk.done++; upd(); return tick().then(loop); }
+            it.fp = fp; BLDedup.add(dIdx, BLDedup.entryFromFp(fp, { id: it.id, name: it.name }));
+          }
+          bulk.items.push(it);
+          if (L) { try { URL.revokeObjectURL(L.url); } catch (e) {} L.img.src = ''; }
+          bulk.done++; upd(); return tick().then(loop);
+        });
+      });
+    }
+    ensureOcr().then(function () { return window.BLOcr._getWorker().catch(function () { bulk.ocrOk = false; }); }, function () { bulk.ocrOk = false; }).then(loop).then(function () {
+      bulkFinalize(); bulk.t1 = Date.now(); bulk.phase = 'review';
+      window.__bulkInfo = { ms: bulk.t1 - bulk.t0, n: bulk.items.length, dup: bulk.dup, skipped: bulk.skipped, stopped: bulk.stop };
+      if (R.view === 'bulk') render();
+    });
+  }
+  function bulkCamLabel(key) {
+    if (!key) key = bulk.def;
+    var c = cam(key); if (c) return c.name;
+    var n = bulk.newCams.filter(function (x) { return x.key === key; })[0]; return n ? n.name + ' (new)' : 'No camera';
+  }
+  function bulkCamOf(it) { return it.cam || bulk.def; }
+  function bulkGroups() {
+    var by = {}, groups = [], gi = {};
+    bulk.items.forEach(function (it) { if (it.t) (by[bulkCamOf(it)] = by[bulkCamOf(it)] || []).push(it); });
+    Object.keys(by).forEach(function (k) {
+      var cur = null;
+      by[k].sort(function (a, b) { return ymdT(a.t) - ymdT(b.t); }).forEach(function (it) {
+        var t = ymdT(it.t);
+        if (cur && t - cur.end <= GROUP_S * 1000) { cur.ids.push(it.id); cur.end = t; } else { cur = { ids: [it.id], start: t, end: t, cam: k }; groups.push(cur); }
+      });
+    });
+    groups.sort(function (a, b) { return a.start - b.start; });
+    groups.forEach(function (g, n) { g.n = n + 1; g.ids.forEach(function (id) { gi[id] = g; }); });
+    return { list: groups, of: gi };
+  }
+  function bulkBuckLabel(key) { var b = deer(key); if (b) return b.name; var n = bulk.newBucks.filter(function (x) { return x.key === key; })[0]; return n ? n.name + ' (new)' : ''; }
+  function bulkSuggest(it) {
+    if (it.deer || !it.t) return null; var c = bulkCamOf(it); if (!cam(c)) return null;
+    var sg = idSuggest({ id: '_', deer: [], cam: c, t: it.t, tags: [] }); return sg && deer(sg.id) ? sg : null;
+  }
+  function bulkRowHtml(it, ix, gr, open) {
+    var d = it.t ? it.t.slice(0, 10) : (it.partialDate || ''), tm = it.t ? it.t.slice(11, 19) : (it.partialTime || ''), flag = it.conf !== 'ok';
+    var badge = it.conf === 'none' ? '<span class="bb bad">No time</span>' : it.conf === 'check' ? '<span class="bb chk">Check</span>' : it.tsrc === 'exif' && !it.stampAgree ? '<span class="bb file">File time</span>' : '<span class="bb ok">Stamp ✓</span>';
+    var sg = bulkSuggest(it), when = it.t ? fmtDate(parseLocal(it.t)) + ' · ' + fmtTime(parseLocal(it.t)) : 'no time yet';
+    var fields = '<div class="bf"><label><span>Date</span><input type="date" data-f="d" data-i="' + ix + '" value="' + esc(d) + '"></label><label><span>Time</span><input type="time" step="1" data-f="t" data-i="' + ix + '" value="' + esc(tm) + '"></label><label><span>Temp °F</span><input type="number" inputmode="numeric" min="-40" max="130" data-f="tp" data-i="' + ix + '" value="' + (it.temp === null ? '' : it.temp) + '" placeholder="–"></label></div>';
+    var show = flag || open;
+    return '<div class="brow ' + (flag ? 'flag' : '') + '" data-row="' + ix + '"><label class="bchk"><input type="checkbox" data-sel="' + ix + '"' + (bulk.sel[it.id] ? ' checked' : '') + ' aria-label="Select photo ' + esc(it.name) + '"></label>' +
+      (it.mini ? '<img class="bth" loading="lazy" decoding="async" alt="" src="' + it.mini + '">' : '<span class="bth none">no<br>pic</span>') +
+      '<div class="bmain"><div class="bname"><b class="mono">' + esc(it.name) + '</b> ' + badge + (gr && gr.ids.length > 1 ? ' <span class="bb grp">Sighting ' + gr.n + ' · ' + gr.ids.length + ' photos</span>' : '') + '</div>' +
+      (show ? fields : '<div class="bwhen">' + esc(when) + (it.temp !== null ? ' · ' + it.temp + '°F' : '') + ' · ' + esc(bulkCamLabel(bulkCamOf(it))) + ' <button class="lnk" data-act="bulk-edit" data-i="' + ix + '">Edit</button></div>') +
+      (it.deer ? '<div class="bwho">★ ' + esc(bulkBuckLabel(it.deer)) + '</div>' : '') +
+      (it.notes.length ? '<div class="bnote">' + esc(it.notes.join(' ')) + (it.alt && it.conf === 'check' ? (it.altSrc === 'stamp' ? ' <button class="lnk" data-act="bulk-usestamp" data-i="' + ix + '">Use the stamp time (' + esc(fmtDate(parseLocal(it.alt)) + ' ' + fmtTime(parseLocal(it.alt))) + ')</button>' : ' <button class="lnk" data-act="bulk-usefile" data-i="' + ix + '">Use the file time</button>') : '') + '</div>' : '') +
+      (it.conf === 'none' && it.fileT ? '<div class="bnote"><button class="lnk" data-act="bulk-usefiledate" data-i="' + ix + '">Use file date (' + esc(fmtDate(parseLocal(it.fileT)) + ' ' + fmtTime(parseLocal(it.fileT))) + ')</button> <span class="muted">Often when the card was copied, not when the photo was taken.</span></div>' : '') +
+      (sg ? '<div class="bnote sug">Suggestion: <b>★ ' + esc(deer(sg.id).name) + '</b>? Same camera and visit as ' + plural(sg.n, 'photo') + ' you tagged. <button class="btn sm go" data-act="bulk-sug" data-i="' + ix + '">Yes, that’s him</button></div>' : '') + '</div></div>';
+  }
+  function bulkCounts() {
+    var c = { n: bulk.items.length, ok: 0, check: 0, none: 0, stamp: 0, exif: 0 };
+    bulk.items.forEach(function (it) { c[it.conf]++; if (it.t && (it.tsrc === 'stamp' || it.stampAgree)) c.stamp++; else if (it.t && it.tsrc === 'exif') c.exif++; });
+    return c;
+  }
+  function bulkPlanCams() { var used = {}; bulk.items.forEach(function (it) { used[bulkCamOf(it)] = 1; }); return bulk.newCams.filter(function (n) { return used[n.key]; }); }
+  function bulkPlanBucks() { var used = {}; bulk.items.forEach(function (it) { if (it.deer) used[it.deer] = 1; }); return bulk.newBucks.filter(function (n) { return used[n.key]; }); }
+  function bulkSetupHtml() {
+    var opts = S.cameras.map(function (c) { return '<option value="' + esc(c.id) + '"' + (S.settings.lastCam === c.id ? ' selected' : '') + '>' + esc(c.name) + '</option>'; }).join(''), canNew = canAddCam();
+    return '<div class="paper" id="bulk-setup"><h3 style="margin-top:0">Pick the photos, the app does the rest</h3>' +
+      '<p class="small" style="margin:0 0 10px">Choose up to ' + BULK_MAX + ' photos at once. Buck Ledger reads the date, time and temperature printed on each one (and the camera name when the stamp has one), groups photos taken within 2 minutes into one sighting, and shows you a list to check. Only the ones it can’t read need you.</p>' +
+      '<label class="field"><span>Which camera is this batch from?</span><select id="bulk-cam">' + opts + (canNew ? '<option value="__new"' + (!S.cameras.length ? ' selected' : '') + '>＋ New camera…</option>' : '') + '</select></label>' +
+      '<label class="field" id="bulk-new-wrap" style="display:' + (!S.cameras.length ? 'block' : 'none') + '"><span>Camera name</span><input type="text" id="bulk-new" maxlength="60" placeholder="e.g. Creek crossing, Food plot, Stand East"></label>' +
+      (!canNew ? '<p class="small muted">' + freeLine('cam') + '</p>' : '') +
+      '<label class="field"><span>Where is the stamp on your photos?</span><select id="bulk-pos"><option value="auto">Find it (bottom, then top)</option><option value="bottom">Bottom strip</option><option value="top">Top strip</option></select></label>' +
+      '<button class="btn go block" data-act="bulk-pick">Choose photos</button><input type="file" id="bulk-file" accept="image/*" multiple hidden>' +
+      '<p class="small muted" style="margin:10px 0 0">Nothing is uploaded. Photos are shrunk to a small copy kept on this device. Phone screenshots of trail cam pictures work too. If a photo has no readable stamp, its time comes from the photo file; if there’s neither, you type it or leave it for the Stamp Reader.</p></div>' + filesTip();
+  }
+  function bulkRunHtml() {
+    return '<div class="paper"><h3 style="margin-top:0">Reading your photos…</h3><p class="muted small" id="bulk-status">' + bulk.done + ' of ' + bulk.total + '</p><div class="progress"><i id="bulk-bar" style="width:' + (bulk.total ? bulk.done / bulk.total * 100 : 0) + '%"></i></div>' +
+      '<p class="small muted" style="margin:0 0 10px">Keep this screen open. One photo at a time, so your phone stays responsive.</p><button class="btn ink block" data-act="bulk-stop">Stop reading (keep the rest as they are)</button></div>';
+  }
+  function bulkReviewHtml() {
+    var c = bulkCounts(), gs = bulkGroups(), b = bulk, h = '<div class="bulkwide">';
+    var sec = ((b.t1 - b.t0) / 1000).toFixed(1);
+    h += '<div class="paper" id="bulk-sum"><h3 style="margin:0 0 6px;font-family:Georgia,serif">' + plural(c.n, 'photo') + ' read in ' + sec + ' s</h3><ul class="small" style="margin:0;padding-left:18px">' +
+      '<li><b>' + c.stamp + '</b> read from the stamp' + (c.exif ? ' · <b>' + c.exif + '</b> from the photo file' : '') + '</li>' +
+      '<li id="bulk-flagcount">' + (c.check + c.none ? '<b>' + (c.check + c.none) + '</b> need a look (listed first)' : '<b>Nothing needs a look ✓</b>') + '</li>' +
+      '<li>' + gs.list.length + ' sightings (photos within 2 minutes of each other)</li>' +
+      (b.dup ? '<li>' + plural(b.dup, 'photo') + ' skipped: already in your ledger</li>' : '') + (b.skipped ? '<li>' + plural(b.skipped, 'file') + ' skipped: not photos</li>' : '') +
+      (b.over ? '<li><b>' + plural(b.over, 'photo') + ' not read:</b> one import takes up to ' + BULK_MAX + '. Pick the rest in another import.</li>' : '') +
+      (b.stop ? '<li>You stopped early: the rest were kept with their file time only.</li>' : '') + (!b.ocrOk ? '<li><b>Stamp reading wasn’t available.</b> Used the file times only.</li>' : '') + '</ul></div>';
+    if (!c.n) return h + '<div class="paper"><p>No new photos to import.</p><a class="btn ink block" href="#/bulk" data-act="bulk-again">Pick again</a></div></div>';
+    // batch tools
+    var camOpts = S.cameras.map(function (x) { return '<option value="' + esc(x.id) + '">' + esc(x.name) + '</option>'; }).join('') + b.newCams.map(function (x) { return '<option value="' + x.key + '">' + esc(x.name) + ' (new)</option>'; }).join('');
+    var buckOpts = '<option value="">— none (the Sort Pass will ask) —</option>' + S.deer.map(function (x) { return '<option value="' + esc(x.id) + '">★ ' + esc(x.name) + '</option>'; }).join('') + b.newBucks.map(function (x) { return '<option value="' + x.key + '">★ ' + esc(x.name) + ' (new)</option>'; }).join('');
+    var nm = Object.keys(b.names).filter(function (k) { return !b.names[k].cam && !b.newCams.some(function (x) { return nameSame(x.name, k); }); });
+    h += '<div class="paper" id="bulk-tools"><div class="bsel"><button class="btn sm ink" data-act="bulk-selall">Select all</button><button class="btn sm ink" data-act="bulk-selnone">Select none</button><span class="small muted" id="bulk-selcount">' + selCount() + ' selected</span></div>' +
+      '<div class="bgrid"><label class="field"><span>Camera for <b id="bulk-target">' + (selCount() ? 'the selected photos' : 'the whole batch') + '</b></span><select id="bulk-camsel"><option value="">Choose…</option>' + camOpts + '<option value="__new">＋ New camera…</option></select></label>' +
+      '<label class="field"><span>Buck for the selected photos <i class="muted">(optional)</i></span><select id="bulk-bucksel"><option value="__keep">Choose…</option>' + buckOpts + '<option value="__new">＋ New buck…</option></select></label></div>' +
+      '<p class="tiny muted" style="margin:0">Bucks are never named for you: pick one you already have, or type a new name. Tick the photos first (a sighting’s checkbox selects all its photos).</p>' +
+      (nm.length ? '<div class="bnames small">Camera names printed on the stamps: ' + nm.map(function (k) { return '<button class="btn sm" data-act="bulk-namecam" data-name="' + esc(k) + '">Make “' + esc(k) + '” a camera (' + b.names[k].n + ' photos)</button>'; }).join(' ') + '</div>' : '') +
+      (Object.keys(b.names).some(function (k) { return b.names[k].cam; }) ? '<p class="tiny muted" style="margin:6px 0 0">Photos whose stamp names one of your cameras went to that camera.</p>' : '') + '</div>';
+    var sugN = b.items.filter(function (it) { return bulkSuggest(it); }).length;
+    if (sugN) h += '<div class="panel small" id="bulk-sugbar">Suggestions: <b>' + plural(sugN, 'photo') + '</b> look like the same visit as a buck you already tagged. <button class="btn sm go" data-act="bulk-sugall">Apply all ' + sugN + '</button> <span class="muted">or tap each one below.</span></div>';
+    var flagged = b.items.map(function (it, ix) { return [it, ix]; }).filter(function (x) { return x[0].conf !== 'ok'; });
+    if (flagged.length) h += '<h3 class="bh" id="bulk-flaghead">Needs a look (' + flagged.length + ')</h3><div class="blist" id="bulk-flagged">' + flagged.map(function (x) { return bulkRowHtml(x[0], x[1], gs.of[x[0].id], true); }).join('') + '</div>';
+    var ready = b.items.map(function (it, ix) { return [it, ix]; }).filter(function (x) { return x[0].conf === 'ok'; }).sort(function (a, z) { return ymdT(a[0].t) - ymdT(z[0].t); });
+    if (ready.length) {
+      h += '<h3 class="bh">Ready (' + ready.length + ')</h3><div class="blist" id="bulk-ready">'; var lastG = null;
+      ready.forEach(function (x) {
+        var g = gs.of[x[0].id];
+        if (g && g !== lastG && g.ids.length > 1) h += '<label class="bgh"><input type="checkbox" data-selg="' + g.n + '"> Sighting ' + g.n + ' · ' + plural(g.ids.length, 'photo') + ' · ' + esc(fmtDate(new Date(g.start)) + ' ' + fmtTime(new Date(g.start))) + '</label>';
+        lastG = g; h += bulkRowHtml(x[0], x[1], g, bulk.open && bulk.open[x[0].id]);
+      });
+      h += '</div>';
+    }
+    var pc = bulkPlanCams(), pb = bulkPlanBucks();
+    h += '<div class="bsave" id="bulk-savebar"><div class="small" id="bulk-saveinfo">' + bulkSaveInfo(c, pc, pb) + '</div><button class="btn go block" data-act="bulk-save" id="bulk-savebtn">Save all ' + c.n + '</button></div></div>';
+    return h;
+  }
+  function selCount() { var n = 0; if (bulk) bulk.items.forEach(function (it) { if (bulk.sel[it.id]) n++; }); return n; }
+  function bulkSaveInfo(c, pc, pb) {
+    var s = [];
+    if (c.none) s.push(plural(c.none, 'photo') + ' with no time will wait in the Stamp Reader.');
+    if (pc.length) s.push('New camera' + (pc.length > 1 ? 's' : '') + ': ' + pc.map(function (x) { return esc(x.name); }).join(', ') + '.');
+    if (pb.length) s.push('New buck' + (pb.length > 1 ? 's' : '') + ': ' + pb.map(function (x) { return esc(x.name); }).join(', ') + '.');
+    var left = bulk.items.filter(function (it) { return !it.deer; }).length;
+    if (left) s.push(plural(left, 'photo') + ' without a buck go to the Sort Pass.');
+    return s.join(' ');
+  }
+  function bulkSavedHtml() {
+    var r = bulk.saved;
+    return '<div class="paper" id="bulk-result"><h3 style="font-family:Georgia,serif;margin-top:0">Saved ' + plural(r.count, 'photo') + '</h3><ul class="small" style="padding-left:18px;margin:6px 0 12px">' +
+      '<li>' + plural(r.timed, 'photo') + ' with a date and time' + (r.stamp ? ' (' + r.stamp + ' from the stamp, ' + r.exif + ' from the file, ' + r.typed + ' typed)' : '') + '</li>' +
+      (r.temps ? '<li>' + plural(r.temps, 'temperature') + ' filled in</li>' : '') +
+      (r.cams.length ? '<li>New camera' + (r.cams.length > 1 ? 's' : '') + ': ' + r.cams.map(esc).join(', ') + '</li>' : '') + (r.bucks.length ? '<li>New buck' + (r.bucks.length > 1 ? 's' : '') + ': ' + r.bucks.map(esc).join(', ') + '</li>' : '') +
+      (r.assigned ? '<li>' + plural(r.assigned, 'photo') + ' tagged with a buck</li>' : '') +
+      (r.noTime ? '<li><b>' + plural(r.noTime, 'photo') + ' still need a time.</b> The Stamp Reader has them.</li>' : '<li>Every photo has a date and time ✓</li>') + '</ul>' +
+      (r.unsorted ? '<a class="btn go block" href="#/sort">Start the Sort Pass (' + r.unsorted + ')</a>' : '<a class="btn go block" href="#/">Open the Ledger</a>') +
+      '<div class="btn-row" style="margin-top:8px">' + (r.noTime ? '<a class="btn ink" href="#/stamp">Stamp Reader</a>' : '') + '<a class="btn ink" href="#/">Ledger</a><button class="btn ink" data-act="bulk-again">Import more</button></div></div>';
+  }
+  VIEWS.bulk = function () {
+    var h = head('Bulk import', '#/');
+    if (!bulk || bulk.phase === 'setup') return h + bulkSetupHtml();
+    if (bulk.phase === 'run') return h + bulkRunHtml();
+    if (bulk.phase === 'review') return h + bulkReviewHtml();
+    return h + bulkSavedHtml();
+  };
+  function bulkRerender() { var y = window.scrollY; render(); window.scrollTo(0, y); }
+  VIEWS.bulk.after = function () {
+    var sel = $('#bulk-cam');
+    if (sel) {
+      sel.addEventListener('change', function () { $('#bulk-new-wrap').style.display = sel.value === '__new' ? 'block' : 'none'; });
+      $('#bulk-file').addEventListener('change', function (e) {
+        var files = Array.prototype.slice.call(e.target.files || []); e.target.value = '';
+        if (!files.length) return;
+        var cid = sel.value, nn = '';
+        if (cid === '__new') { nn = ($('#bulk-new').value || '').trim(); if (!nn) { toast('Name the camera first'); return; } if (!canAddCam()) { proSheet('cam'); return; } }
+        S.settings.lastCam = cid === '__new' ? S.settings.lastCam : cid; save();
+        bulkStart(files, cid, nn, $('#bulk-pos').value);
+      });
+    }
+  };
+  document.addEventListener('change', function (e) { if (R && R.view === 'bulk') bulkChange(e); });
+  function bulkChange(e) {
+    if (!bulk || bulk.phase !== 'review') return;
+    var t = e.target, ix, it;
+    if (t.hasAttribute('data-sel')) { it = bulk.items[+t.getAttribute('data-sel')]; if (it) bulk.sel[it.id] = t.checked; bulkSelUi(); return; }
+    if (t.hasAttribute('data-selg')) {
+      var g = bulkGroups().list.filter(function (x) { return x.n === +t.getAttribute('data-selg'); })[0];
+      if (g) { g.ids.forEach(function (id) { bulk.sel[id] = t.checked; }); Array.prototype.forEach.call(document.querySelectorAll('[data-sel]'), function (c) { var o = bulk.items[+c.getAttribute('data-sel')]; if (o) c.checked = !!bulk.sel[o.id]; }); bulkSelUi(); }
+      return;
+    }
+    if (t.hasAttribute('data-f')) { ix = +t.getAttribute('data-i'); it = bulk.items[ix]; if (it) bulkEditField(it, ix, t); return; }
+    if (t.id === 'bulk-camsel') { bulkSetCam(t.value); t.value = ''; return; }
+    if (t.id === 'bulk-bucksel') { bulkSetBuck(t.value); t.value = '__keep'; return; }
+  }
+  function bulkSelUi() {
+    var s = $('#bulk-selcount'), g = $('#bulk-target'); if (s) s.textContent = selCount() + ' selected'; if (g) g.textContent = selCount() ? 'the selected photos' : 'the whole batch';
+  }
+  function bulkEditField(it, ix, inp) {
+    var f = inp.getAttribute('data-f'), row = inp.closest('.brow');
+    var dv = $('[data-f=d]', row).value, tv = $('[data-f=t]', row).value, tp = $('[data-f=tp]', row).value;
+    if (f === 'tp') { var n = tp === '' ? null : Number(tp); if (n !== null && !(isFinite(n) && n >= -40 && n <= 130)) { toast('Temperature −40 to 130 °F'); inp.value = it.temp === null ? '' : it.temp; return; } it.temp = n; it.tempSrc = n === null ? null : 'typed'; return; }
+    if (!dv || !tv) { it.partialDate = dv; it.partialTime = tv; return; }
+    var val = dv + 'T' + (tv.length === 5 ? tv + ':00' : tv.slice(0, 8));
+    if (!parseLocal(val)) { toast('That date/time doesn’t look right'); return; }
+    it.t = val; it.tsrc = 'stamp'; it.conf = 'ok'; it.notes = ['Typed by you.']; it.alt = null; bulkRerender();
+  }
+  function bulkTargets() { var s = bulk.items.filter(function (it) { return bulk.sel[it.id]; }); return s.length ? s : null; }
+  function bulkCamRoom() { var l = camLimit(); return l ? l - S.cameras.length - bulk.newCams.length : Infinity; }
+  function bulkBuckRoom() { var l = buckLimit(); return l ? l - S.deer.length - bulk.newBucks.length : Infinity; }
+  function bulkSetCam(v) {
+    if (!v) return;
+    function apply(key) { var tg = bulkTargets(); if (tg) tg.forEach(function (it) { it.cam = key; }); else { bulk.def = key; bulk.items.forEach(function (it) { it.cam = ''; }); } bulkRerender(); }
+    if (v !== '__new') { apply(v); return; }
+    if (bulkCamRoom() <= 0) { toast('Your ' + TIER_NAME[tier()] + ' version keeps ' + plural(camLimit(), 'camera') + '. These photos stay with “' + bulkCamLabel() + '”.', 4500); proSheet('cam'); return; }
+    promptSheet('Name the camera', 'For example “Creek crossing” or “Food plot”.', 'Add camera').then(function (name) {
+      if (!name) return; var key = 'n' + (bulk.newCams.length + 1); bulk.newCams.push({ key: key, name: clampStr(name, 60) }); apply(key);
+    });
+  }
+  function bulkSetBuck(v) {
+    if (v === '__keep') return;
+    var tg = bulkTargets(); if (!tg) { toast('Tick the photos first'); return; }
+    function apply(key) { tg.forEach(function (it) { it.deer = key; }); bulkRerender(); }
+    if (v !== '__new') { apply(v); return; }
+    if (bulkBuckRoom() <= 0) { toast('Your ' + TIER_NAME[tier()] + ' version keeps ' + plural(buckLimit(), 'named buck') + '. These photos stay without a buck for the Sort Pass.', 4500); proSheet('buck'); return; }
+    promptSheet('Name a buck', 'Something you’ll recognize, like “Big 8” or “Split G2”.', 'Add buck').then(function (name) {
+      if (!name) return; var key = 'b' + (bulk.newBucks.length + 1); bulk.newBucks.push({ key: key, name: clampStr(name, 60) }); apply(key);
+    });
+  }
+  function bulkSave() {
+    var b = bulk, pc = bulkPlanCams(), pb = bulkPlanBucks(), cl = camLimit(), bl2 = buckLimit();
+    if (cl && S.cameras.length + pc.length > cl) { toast('This batch would add ' + plural(pc.length, 'camera') + ' but your ' + TIER_NAME[tier()] + ' version keeps ' + plural(cl, 'camera') + '. Nothing was saved. Pick an existing camera for those photos.', 6000); proSheet('cam'); return; }
+    if (bl2 && S.deer.length + pb.length > bl2) { toast('This batch would add ' + plural(pb.length, 'named buck') + ' but your ' + TIER_NAME[tier()] + ' version keeps ' + plural(bl2, 'named buck') + '. Nothing was saved. Pick an existing buck, or clear it.', 6000); proSheet('buck'); return; }
+    var btn = $('#bulk-savebtn'); if (btn) btn.disabled = true;
+    var camId = {}, buckId = {}, madeC = [], madeB = [];
+    pc.forEach(function (n) { var id = addCamera(n.name); if (id) { camId[n.key] = id; madeC.push(n.name); if (window.BLTcl && isPro()) window.BLTcl.autoLink(S, cam(id)); } });
+    pb.forEach(function (n) { var id = addBuck(n.name); if (id) { buckId[n.key] = id; madeB.push(n.name); } });
+    var resC = function (k) { return camId[k] || (cam(k) ? k : null); }, fallback = S.cameras.length ? (cam(S.settings.lastCam) ? S.settings.lastCam : S.cameras[0].id) : null;
+    var pulls = {}, out = [], res = { count: 0, timed: 0, stamp: 0, exif: 0, typed: 0, temps: 0, noTime: 0, assigned: 0, unsorted: 0, cams: madeC, bucks: madeB };
+    b.items.forEach(function (it) {
+      var cid = resC(bulkCamOf(it)) || fallback, pl = pulls[cid]; if (!pl) pl = pulls[cid] = { id: uid(), cam: cid, at: Date.now(), count: 0, noTime: 0 };
+      var did = it.deer ? (buckId[it.deer] || (deer(it.deer) ? it.deer : null)) : null;
+      var p = { id: it.id, cam: cid, pull: pl.id, name: it.name, size: it.size, t: it.t || null, tsrc: it.t ? (it.tsrc === 'exif' ? 'exif' : it.tsrc === 'file' ? 'file' : 'stamp') : null, fileT: it.fileT, tags: [], deer: did ? [did] : [], done: !!did,
+        thumb: it.thumb, added: Date.now(), temp: it.temp, tempSrc: it.temp === null ? null : (it.tempSrc === 'ocr' ? 'ocr' : 'typed') };
+      if (it.fp) { var fl = BLDedup.fields(it.fp); p.hash = fl.hash; p.dh = fl.dh; p.tv = fl.tv; p.w = fl.w; p.h = fl.h; p.stamp = { name: it.fp.camName || '', s: it.secKnown ? 1 : 0 }; }
+      out.push(p); pl.count++; if (!p.t) { pl.noTime++; res.noTime++; } else { res.timed++; if (it.tsrc === 'exif') res.exif++; else if (it.typedSrc) res.typed++; else res.stamp++; }
+      if (it.temp !== null) res.temps++; if (did) res.assigned++; else res.unsorted++;
+    });
+    res.count = out.length;
+    // the typed ones: stamp-sourced but entered by hand
+    b.items.forEach(function (it) { if (it.t && it.tsrc === 'stamp' && it.notes.indexOf('Typed by you.') >= 0) { res.typed++; res.stamp--; } });
+    photosPutMany(out).then(function () {
+      out.forEach(function (p) { P.push(p); PI[p.id] = p; });
+      Object.keys(pulls).forEach(function (k) { if (pulls[k].count) S.pulls.push(pulls[k]); });
+      bulkFree(); b.saved = res; b.phase = 'saved'; save(); window.scrollTo(0, 0); render();
+    }, function () { toast('Couldn’t save. Is your phone storage full? Nothing was lost; try again after freeing space.', 6000); if (btn) btn.disabled = false; });
+  }
+  function bulkClick(act, a) {
+    var ix = +a.getAttribute('data-i'), it = bulk && bulk.items[ix];
+    switch (act) {
+      case 'bulk-pick': {
+        var sel = $('#bulk-cam');
+        if (sel && sel.value === '__new' && !($('#bulk-new').value || '').trim()) { toast('Name the camera first'); $('#bulk-new').focus(); return true; }
+        $('#bulk-file').click(); return true;
+      }
+      case 'bulk-stop': if (bulk) { bulk.stop = true; var s = $('#bulk-status'); if (s) s.textContent = 'Finishing…'; } return true;
+      case 'bulk-again': bulkFree(); bulk = null; if (R.view === 'bulk') render(); else go('#/bulk'); return true;
+      case 'bulk-selall': bulk.items.forEach(function (x) { bulk.sel[x.id] = true; }); bulkRerender(); return true;
+      case 'bulk-selnone': bulk.sel = {}; bulkRerender(); return true;
+      case 'bulk-edit': bulk.open = bulk.open || {}; if (it) bulk.open[it.id] = true; bulkRerender(); return true;
+      case 'bulk-usefile': if (it && it.alt) { it.t = it.alt; it.tsrc = 'exif'; it.conf = 'ok'; it.notes = ['Using the time saved in the photo file.']; it.alt = null; it.altSrc = null; bulkRerender(); } return true;
+      case 'bulk-usestamp': if (it && it.alt && it.altSrc === 'stamp') { it.t = it.alt; it.tsrc = 'stamp'; it.conf = 'ok'; it.notes = ['Using the time printed on the stamp.']; it.alt = null; it.altSrc = null; bulkRerender(); } return true;
+      case 'bulk-usefiledate': if (it && it.fileT) { it.t = it.fileT; it.tsrc = 'file'; it.conf = 'ok'; it.notes = ['Using the file date (check it).']; bulkRerender(); } return true;
+      case 'bulk-sug': { var sg = it && bulkSuggest(it); if (sg) { it.deer = sg.id; bulkRerender(); } return true; }
+      case 'bulk-sugall': { bulk.items.forEach(function (x) { var s2 = bulkSuggest(x); if (s2) x.deer = s2.id; }); bulkRerender(); return true; }
+      case 'bulk-namecam': {
+        var nm = a.getAttribute('data-name'), hit = bulk.items.filter(function (x) { return x.camName === nm; });
+        if (bulkCamRoom() <= 0) { toast('Your ' + TIER_NAME[tier()] + ' version keeps ' + plural(camLimit(), 'camera') + '. Those ' + plural(hit.length, 'photo') + ' stay with “' + bulkCamLabel() + '”.', 4500); proSheet('cam'); return true; }
+        var key = 'n' + (bulk.newCams.length + 1); bulk.newCams.push({ key: key, name: nm.charAt(0) + nm.slice(1).toLowerCase() }); hit.forEach(function (x) { x.cam = key; }); bulkRerender(); return true;
+      }
+      case 'bulk-save': bulkSave(); return true;
+    }
+    return false;
   }
 
   /* ---------------- Sort Pass ---------------- */
@@ -984,16 +1454,28 @@
     function lum(i) { return d[i] * 0.3 + d[i + 1] * 0.59 + d[i + 2] * 0.11; }
     function flat(n, at) {   // share of pixels on this line within 12 of the line's middle value
       var v = []; for (var k = 0; k < n; k++) v.push(lum(at(k)));
-      var m = v.slice().sort(function (a, b) { return a - b; })[n >> 1], f = 0, sat = 0; v.forEach(function (x) { if (Math.abs(x - m) < 12) f++; });
+      var m = v.slice().sort(function (a, b) { return a - b; })[n >> 1], f = 0, sat = 0; if (m > 70 && m < 195) return 0;   // bars are black, dark grey, white or light grey
+      v.forEach(function (x) { if (Math.abs(x - m) < 5) f++; });
       for (var k2 = 0; k2 < n; k2 += 4) { var i2 = at(k2); sat += Math.max(d[i2], d[i2 + 1], d[i2 + 2]) - Math.min(d[i2], d[i2 + 1], d[i2 + 2]); }
       return sat / Math.ceil(n / 4) > 24 ? Math.min(f / n, 0.9) : f / n;   // phone bars are black, grey or white, not coloured
     }
     function span(len, frac) {   // longest run of photo lines, then grow through stamp ribbons (short solid gaps allowed)
-      var bar = frac.map(function (f) { return f > 0.97; }), best = [0, len], run = -1, bl = 0;
+      var bar = frac.map(function (f) { return f > 0.98; }), best = [0, len], run = -1, bl = 0;
       for (var i = 0; i <= len; i++) { if (i < len && !bar[i]) { if (run < 0) run = i; } else if (run >= 0) { if (i - run > bl) { bl = i - run; best = [run, i]; } run = -1; } }
       if (bl < len * 0.12) return [0, len];
       var gap = Math.max(2, Math.round(bl * 0.03)), grow = Math.round(bl * 0.2);
-      function ext(a, dir) { var p = a, solid = 0, last = a; for (var k = 0; k < grow; k++) { var q = p + dir; if (q < 0 || q >= len) { last = dir > 0 ? len - 1 : 0; break; } p = q; if (!bar[p] || frac[p] < 0.995) { solid = 0; last = p; } else if (++solid > gap) break; } return last; }
+      function ext(a, dir) {   // from the photo's edge outward: solid pad, then the stamp's text rows (kept), then the matching pad
+        var padMax = Math.max(3, Math.round(bl * 0.04)), textMax = Math.round(bl * 0.2), p = a, p1 = 0, q;
+        for (;;) { q = p + dir; if (q < 0 || q >= len) return dir > 0 ? len - 1 : 0; if (!bar[q]) break; if (p1 >= padMax) return a; p = q; p1++; }
+        var t = 0, last = p, flatRun = 0, gapT = Math.max(2, p1);
+        while (t < textMax) {
+          q = p + dir; if (q < 0 || q >= len) return dir > 0 ? len - 1 : 0;
+          if (bar[q]) { if (++flatRun > gapT) break; p = q; t++; continue; }
+          flatRun = 0; p = q; t++; last = p;
+        }
+        if (t < 2 || t >= textMax) return a;
+        var r = last + dir * (p1 + 1); return r < 0 ? 0 : r >= len ? len - 1 : r;
+      }
       var a = ext(best[0], -1), b = ext(best[1] - 1, 1) + 1;
       if (a <= gap) a = 0; if (b >= len - gap) b = len;
       return [a, b];
@@ -1236,6 +1718,8 @@
     h += '</div>';
     h += '<div class="paper" id="research-links"><h3>Your states &amp; research</h3><p class="small muted" style="margin:0 0 8px">' + (S.settings.states.length ? esc(S.settings.states.map(function (a) { return SD()[a].name; }).join(', ')) : 'No state picked yet.') + '</p><div class="btn-row"><a class="btn ink" href="#/states">Pick states</a><a class="btn ink" href="#/research">Research</a></div></div>';
     h += '<div class="paper" id="weather"><h3>Weather for your visits</h3><p class="small muted" style="margin:0 0 8px">Hourly wind, gusts, temp, rain, pressure and cloud for each visit, from Open-Meteo. Only when you tap: it sends your property location and the dates, nothing else. Saved on this phone.</p><button class="btn ink block" data-act="wx-visits">Get weather for my visits</button></div>';
+    h += '<div class="paper" id="tcl-card"><h3>Trail Cam Link' + (isPro() ? '' : ' <span class="tiny muted">Pro</span>') + '</h3><p class="small muted" style="margin:0 0 8px">Card photos, camera spots and every buck in one place.</p><a class="btn ink block" href="#/tcl">Open Trail Cam Link</a></div>';
+    h += '<div class="paper" id="pins-card"><h3>Bring Your Pins' + (isPro() ? '' : ' <span class="tiny muted">Pro</span>') + '</h3><p class="small muted" style="margin:0 0 8px">Your stands, cameras and signs from a GPX, KML or KMZ file.</p><a class="btn ink block" href="#/pins">' + (S.pins.length ? 'Your pins (' + S.pins.length + ')' : 'Bring your pins') + '</a></div>';
     h += '<div class="paper" id="location"><h3>Property location</h3><p class="small muted" style="margin:0 0 8px">Used on this phone for sunrise, sunset, moon and shooting light. It is sent only when you tap “Get weather” (to Open-Meteo) or “Get USGS elevation” (box corners, to USGS).</p>' +
       '<div class="dt2" style="grid-template-columns:1fr 1fr"><label class="field"><span>Latitude</span><input type="text" inputmode="decimal" id="lat" value="' + (st.lat === null ? '' : st.lat) + '" placeholder="e.g. 30.12"></label><label class="field"><span>Longitude</span><input type="text" inputmode="decimal" id="lng" value="' + (st.lng === null ? '' : st.lng) + '" placeholder="e.g. -96.45"></label></div>' +
       '<div class="btn-row"><button class="btn ink" data-act="loc-here">Use my location</button><button class="btn ink" data-act="loc-save">Save</button></div>' +
@@ -1870,6 +2354,7 @@
     }
     var a = e.target.closest('[data-act]'); if (!a) return;
     var act = a.getAttribute('data-act'), id = a.getAttribute('data-id');
+    if (act.indexOf('bulk-') === 0 && bulkClick(act, a)) return;
     switch (act) {
       case 'pick-photos': {
         var sel = $('#pull-cam');
@@ -1877,6 +2362,8 @@
         $('#pull-file').click(); return;
       }
       case 'pull-again': pullState = null; render(); return;
+      case 'dedup-show': if (pullState) { pullState.dupOpen = !pullState.dupOpen; render(); } return;
+      case 'dedup-import': if (pullState && pullState.dups && pullState.dups.length) { runPull(pullState.dups.map(function (d) { return d.file; }), pullState.cam, true); } return;
       case 'more-rows': ledgerLimit += 200; render(); return;
       case 'sort-undo': sortUndoLast(); return;
       case 'stamp-band': stampBand = stampBand === 'bottom' ? 'top' : 'bottom'; stampY = null; render(); return;
@@ -2045,6 +2532,7 @@
       P = (r[1] || []).map(function (p) { return cleanPhoto(p, camIds, deerIds); }).filter(Boolean);
       PI = {}; P.forEach(function (p) { PI[p.id] = p; });
       render();
+      if (window.BLDedup) setTimeout(function () { BLDedup.backfill(P, function (p, one) { if (one) photoPut(p); }); }, 4000);
       setTimeout(function () { recheckLicense().catch(function () {}); }, 3000);
       readyResolve();
     }).catch(function (e) {
@@ -2069,7 +2557,9 @@
     t3: function () { return t3Api; }, simDemo: function () { return simDemo; }, sha256: sha256, predStatus: function (id) { var p = S.preds.filter(function (x) { return x.id === id; })[0]; return p ? predStatus(p) : null; },
     predOk: function (id) { var p = S.preds.filter(function (x) { return x.id === id; })[0]; return p ? predOk(p) : null; }, idSuggest: function (pid) { return idSuggest(PI[pid]); },
     periodOf: function (d) { return periodOf(d); }, moonInfo: function (d) { return moonInfo(d); }, headingOf: function (pid) { return headingOf(PI[pid]); }, wx: function () { return WX; },
-    dem: function () { return DEM; }, canPredict: function () { return canPredict(); }
+    bulk: function () { return bulk; }, dem: function () { return DEM; }, canPredict: function () { return canPredict(); }
   };
+  if (window.BLPins) window.BLPins.attach({ views: VIEWS, S: function () { return S; }, save: save, render: render, isPro: isPro, cam: cam, deer: deer, camName: camName, visits: function (s, c) { return visits(s, c); }, fmtDate: fmtDate, fmtTime: fmtTime, head: head, sheet: sheet, toast: toast, uid: uid, addCamera: addCamera });
+  if (window.BLTcl) window.BLTcl.attach({ views: VIEWS, S: function () { return S; }, save: save, render: render, isPro: isPro, cam: cam, camName: camName, visits: function (sub, c) { return visits(sub, c); }, visibleDeer: visibleDeer, photos: function () { return P; }, thumbURL: thumbURL, fmtDate: fmtDate, head: head, toast: toast, esc: esc });
   boot();
 })();

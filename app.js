@@ -955,7 +955,7 @@
     // a temperature only counts from a credible stamp: date and time both read, or the °F and °C agree (noise in a plain photo can look like a number)
     if (v && v.temp !== null && v.temp !== undefined && ((v.date && v.time) || v.tempSure)) { it.temp = v.temp; it.tempSrc = 'ocr'; if (v.tempDisagree && !v.tempSure) it.tempFlag = true; }
     if (v && v.name) it.camText = v.name;
-    it.raw = v ? v.raw : ''; it.order = v && v.order ? v.order : null; it.dateFixed = !!(v && v.dateFixed);
+    it.raw = v ? v.raw : ''; it.order = v && v.order ? v.order : null; it.dateFixed = !!(v && v.dateFixed); it.dateAlt = v && v.dateAlt ? v.dateAlt : null;
     var hasStamp = !!(v && v.date && v.time);
     if (hasStamp) it.stampT = v.date + 'T' + v.time;
     if (ex && hasStamp) {
@@ -997,6 +997,16 @@
       if (hits.length === 1) { items.forEach(function (it) { if (it.camName === nm) it.cam = hits[0].id; }); b.names[nm] = { n: tot[nm], cam: hits[0].id }; }
       else b.names[nm] = { n: tot[nm], cam: null };
     });
+    // a repaired date with a second reading (0 read as 6 more than once): take the one nearer the rest of the batch; the row stays on Check
+    var ref = items.filter(function (i) { return i.t && !i.dateAlt; }).map(function (i) { return ymdT(i.t); }).sort(function (x, y) { return x - y; });
+    if (ref.length >= 3) {
+      var med = ref[Math.floor(ref.length / 2)];
+      items.forEach(function (it) {
+        if (!it.dateAlt || !it.t || it.tsrc !== 'stamp' || it.t.slice(0, 10) !== (it.stampT || '').slice(0, 10)) return;
+        var alt = it.dateAlt + it.t.slice(10), a = ymdT(alt);
+        if (a !== null && !isNaN(a) && Math.abs(ymdT(it.t) - med) > 10 * DAYMS && Math.abs(a - med) < 5 * DAYMS) { it.t = alt; it.stampT = alt; it.conf = 'check'; bulkNote(it, 'One digit of the date looked off. Picked the date that fits the rest of the card. Check it.'); }
+      });
+    }
     /* Trail Cam Link: some cameras print DAY/MONTH. One photo that reads 17/10 settles the whole card: swap the ones that look like 03/10. */
     (function () {
       var dm = items.some(function (it) { return it.stampT && it.order === 'dm'; }), md = items.some(function (it) { return it.stampT && it.order === 'md'; });

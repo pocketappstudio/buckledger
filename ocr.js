@@ -146,6 +146,15 @@
         if (cands.length === 1) { out.date = cands[0]; out.dateFixed = true; }
       }
     }
+    /* a 0 read as 6 ("16/05/2026" for 10/05/2026, "16/05/2626" too): keep the 6-to-0 reading of day and month as the other choice; the batch decides (bulkFinalize) */
+    if (dateStr && out.date) {
+      var tk = dateStr.split(/[\/\-.]/);
+      if (tk[0].length <= 2 && tk.length === 3 && (/6/.test(tk[0]) || /6/.test(tk[1]))) {
+        var a0 = Number(tk[0].replace(/6/g, '0')), b0 = Number(tk[1].replace(/6/g, '0')), y0 = Number(out.date.slice(0, 4)), m0, d0;
+        if (a0 > 12 && b0 <= 12) { d0 = a0; m0 = b0; } else { m0 = a0; d0 = b0; }
+        if (m0 >= 1 && m0 <= 12 && d0 >= 1 && d0 <= 31 && new Date(y0, m0 - 1, d0).getMonth() === m0 - 1) { var v0 = y0 + '-' + pad2(m0) + '-' + pad2(d0); if (v0 !== out.date) out.dateAlt = v0; }
+      }
+    }
     if (timeStr) {
       var tq = timeStr.split(/[:.;]/).map(Number), hh = tq[0], mm = tq[1], ss = tq[2] || 0;
       if (ampm) { if (hh >= 1 && hh <= 12) { hh = hh % 12 + (ampm === 'PM' ? 12 : 0); } else hh = -1; }
@@ -280,7 +289,7 @@
             var r0 = reads[0], conf = reads.reduce(function (m, v) { return Math.max(m, v.conf || 0); }, 0);
             var v = { date: d[0], time: t[0], temp: f[0] === null ? null : Number(f[0]), dateVotes: d[1], timeVotes: t[1], reads: reads.length, band: where, conf: conf, trimmed: !!rect.trimmed, ribbon: !!cvs[0].__ribbon, raw: r0.raw, name: '' };
             v.agreed = !!(v.date && v.time && d[1] >= 2 && t[1] >= 2);
-            v.dateFixed = reads.some(function (r) { return r.dateFixed && r.date === v.date; }); v.order = (reads.filter(function (r) { return r.order; })[0] || {}).order || null;
+            v.dateFixed = reads.some(function (r) { return r.dateFixed && r.date === v.date; }); v.dateAlt = (reads.filter(function (r) { return r.dateAlt && r.date === v.date; })[0] || {}).dateAlt || null; v.order = (reads.filter(function (r) { return r.order; })[0] || {}).order || null;
             var tv = {}; reads.forEach(function (r) { if (r.temp !== null) tv[r.temp] = 1; });
             v.tempVotes = f[1]; v.tempDisagree = Object.keys(tv).length > 1 || (reads.length > 1 && f[1] < 2 && Object.keys(tv).length === 1 && reads.some(function (r) { return r.temp === null; }));
             var sure = reads.some(function (r) { return r.tempSure; }); v.tempSure = sure;

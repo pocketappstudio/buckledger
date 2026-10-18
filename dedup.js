@@ -83,12 +83,12 @@
   // fields saved on a photo record
   function fields(fp) { return { hash: fp.hash || '', dh: fp.dh || '', tv: fp.tv || '', w: fp.w || 0, h: fp.h || 0 }; }
 
-  function newIndex() { return { hash: {}, exif: {}, time: {}, min: {}, n: 0 }; }
+  function newIndex() { return { hash: {}, exif: {}, time: {}, min: {}, day: {}, n: 0 }; }
   function addTo(idx, e) {   // e: { id, hash, dh, size, exifT, t, temp, cam, camName, stampT }
     idx.n++;
     if (e.hash) idx.hash[e.hash] = e;
     if (e.exifT) idx.exif[e.exifT + '|' + e.size] = e;
-    var t = e.stampT || e.t; if (t) { (idx.time[t] = idx.time[t] || []).push(e); var m = String(t).slice(0, 16); (idx.min[m] = idx.min[m] || []).push(e); }
+    var t = e.stampT || e.t; if (t) { (idx.time[t] = idx.time[t] || []).push(e); var m = String(t).slice(0, 16); (idx.min[m] = idx.min[m] || []).push(e); var dy = String(t).slice(0, 10); (idx.day[dy] = idx.day[dy] || []).push(e); }
   }
   function fromPhoto(p) {
     var st = p.stamp || null;
@@ -113,6 +113,19 @@
         if (!exact && fp.sec && e.sec) continue;   // both know their seconds and they differ
         var pic = exact ? ham(fp.dh, e.dh) <= 10 : (fp.tv && e.tv ? tvDiff(fp.tv, e.tv) <= 1.2 : ham(fp.dh, e.dh) <= 2);   // same minute only: a tight test, so burst frames are not taken for copies
         if (pic && (camOk(fp, e) || (!fp.cam && !e.cam)) && tempOk(fp.temp, e.temp)) return { why: 'look', of: e };
+      }
+    }
+    // One misread digit in the hour of a recompressed copy (the stamp reader can slip on a softened picture, e.g. 17:51 read as 18:51): same day,
+    // same minute (and same seconds when both know them), hour off by one digit, and the picture matches as tightly as a recompressed copy does.
+    // Distinct frames are minutes apart or differ far more in the picture, so the hour-only rule keeps burst frames from being taken for copies.
+    if (fp.stampT && fp.tv && fp.dh) {
+      var ds = idx.day[String(fp.stampT).slice(0, 10)] || [], a = String(fp.stampT).slice(11, 19), n, k;
+      for (i = 0; i < ds.length; i++) {
+        e = ds[i]; var et = e.stampT || e.t; if (!e.tv || !et || et === t) continue;
+        var b = String(et).slice(11, 19); if (b.length !== 8 || a.slice(3, 5) !== b.slice(3, 5)) continue;
+        if (fp.sec !== false && e.sec !== false && a.slice(6) !== b.slice(6)) continue;
+        for (n = 0, k = 0; k < 2; k++) if (a[k] !== b[k]) n++;
+        if (n === 1 && tvDiff(fp.tv, e.tv) <= 1.2 && ham(fp.dh, e.dh) <= 10 && camOk(fp, e) && tempOk(fp.temp, e.temp)) return { why: 'look', of: e };
       }
     }
     return null;

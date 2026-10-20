@@ -120,6 +120,7 @@
     out.settings.hideSmall = st.hideSmall === undefined ? true : !!st.hideSmall;
     out.settings.smallMax = num(st.smallMax, 0, 30, 5);
     out.settings.statesAsked = !!st.statesAsked;
+    out.settings.simGuideSeen = !!st.simGuideSeen;
     var seen = {};
     (Array.isArray(s.cameras) ? s.cameras : []).forEach(function (c) {
       if (!c || typeof c !== 'object') return;
@@ -1765,11 +1766,12 @@
   /* ---------------- Simulator (Elite): the 3D Terrain Sim only. The property map editor (sim.js) only marks bedding, food and stands for it ---------------- */
   var simApi = null, simDemo = null;
   VIEWS.sim = function () {
-    var h = head('Simulator');
+    var h = head('Simulator'); if (window.BLGuide && R.q.v !== 'map') h = h.replace('</h1>', '</h1>' + BLGuide.helpBtn);
     if (R.q.v === 'map' && isElite()) return h + '<div class="paper"><h3>Property map</h3><p class="small muted" style="margin:0 0 8px">Mark your bedding, food and stands. The 3D Terrain Sim lays them on your real ground.</p><div id="map-root"></div><a class="btn ink block" style="margin-top:8px" href="#/sim">Back to the 3D sim</a></div>';
     return h + sim3dHtml();
   };
   VIEWS.sim.after = function () {
+    if (window.BLGuide && R.q.v !== 'map' && S.settings) BLGuide.auto(S.settings, save);
     if (R.q.v === 'map' && isElite()) {
       var el = $('#map-root'); if (!el || !window.BuckSim) return;
       simApi = window.BuckSim.mount(el, {
